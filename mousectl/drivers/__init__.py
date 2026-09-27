@@ -1,9 +1,9 @@
 """Registered drivers. To support a new mouse, add a module here that
 exports DRIVER (see docs/ADDING_A_DRIVER.md) and list it below."""
 
-from . import attackshark_x11, rapoo_vt3pro
+from . import attackshark_x11, pulsar_x3, rapoo_vt3pro
 
-DRIVERS = [attackshark_x11.DRIVER, rapoo_vt3pro.DRIVER]
+DRIVERS = [attackshark_x11.DRIVER, rapoo_vt3pro.DRIVER, pulsar_x3.DRIVER]
 
 
 def find(name):

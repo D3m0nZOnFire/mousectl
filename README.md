@@ -9,6 +9,7 @@ Supported:
 |-------------------|-------------------|------------------------|----------|
 | `attackshark-x11` | Attack Shark X11  | wired `1d57:fa55`, dongle `1d57:fa60` | `ashark` |
 | `rapoo-vt3pro`    | Rapoo VT3 PRO     | wired `24ae:4431`, dongle `24ae:1231` | `vt3pro` |
+| `pulsar-x3`       | Pulsar X3 (PX3R21) | wired `3710:3409` / `3410`, dongle `3710:5402` / `5403` (8K) | `x3` |
 
 ## Install
 
@@ -62,6 +63,9 @@ New mouse? See [docs/ADDING_A_DRIVER.md](docs/ADDING_A_DRIVER.md).
 ## Credits
 
 - Attack Shark X11 protocol: [HarukaYamamoto0/attack-shark-x11-driver](https://github.com/HarukaYamamoto0/attack-shark-x11-driver) (MIT)
+- Pulsar X3 protocol: [wertyg775/pulsar-x3-software](https://github.com/wertyg775/pulsar-x3-software),
+  [jonkristian/pulsar-x3-python](https://github.com/jonkristian/pulsar-x3-python) (MIT) and
+  [packerlschupfer/pulsar-mouse-linux](https://github.com/packerlschupfer/pulsar-mouse-linux) (MIT)
 - Rapoo protocol research: [pedro3z0/rapoo-software-linux](https://github.com/pedro3z0/rapoo-software-linux) (MIT)
 
 ## License
