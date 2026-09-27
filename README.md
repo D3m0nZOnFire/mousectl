@@ -55,7 +55,6 @@ New mouse? See [docs/ADDING_A_DRIVER.md](docs/ADDING_A_DRIVER.md).
 
 ## Roadmap
 
-- Rapoo VT0 Air MAX / VT3 Air driver (port of `rapoo-software-linux/backend/rapoo`).
 - Declarative profiles (`mousectl apply prefs.toml`), auto-applied on hotplug
   via a udev-triggered systemd user unit.
 - Waybar battery module on top of `mousectl battery --json`.
