@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # mousectl launcher. Zero dependencies: runs with the system Python 3 straight
-# from the repo. install.sh symlinks it into ~/.local/bin as `mousectl`, and as
-# `ashark` / `vt3pro`, which select the old single-model command lines.
+# from the repo. install.sh symlinks it into ~/.local/bin as `mousectl`.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
@@ -11,6 +10,5 @@ if ! command -v "$PY" >/dev/null 2>&1; then
     exit 1
 fi
 
-export MOUSECTL_ARGV0="$(basename "$0")"
 export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
 exec "$PY" -m mousectl "$@"

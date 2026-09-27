@@ -29,8 +29,8 @@ def val(drv, raw, key, mode="dongle"):
 
 
 class X11Codec(unittest.TestCase):
-    def test_grid_matches_old_tool(self):
-        # Same bytes as the old ashark for every value offered.
+    def test_grid_matches_golden(self):
+        # Byte encoding for every DPI value offered, pinned by the golden fixture.
         golden = GOLDEN["attackshark-x11"]["dpi_roundtrip"]
         self.assertEqual(len(x11.DPI_KIND.values), 330)
         for dpi in x11.DPI_KIND.values:
@@ -217,11 +217,10 @@ class FakeSession(Session):
 class Store(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self._cfg, self._legacy = store.CONFIG_DIR, store.LEGACY_BACKUPS
-        store.CONFIG_DIR, store.LEGACY_BACKUPS = self.tmp.name, {}
+        self._cfg, store.CONFIG_DIR = store.CONFIG_DIR, self.tmp.name
 
     def tearDown(self):
-        store.CONFIG_DIR, store.LEGACY_BACKUPS = self._cfg, self._legacy
+        store.CONFIG_DIR = self._cfg
         self.tmp.cleanup()
 
     def test_backup_before_first_write_then_restore(self):
@@ -242,30 +241,6 @@ class Store(unittest.TestCase):
         with self.assertRaises(ValueError):
             store.load_snapshot(path, x11.DRIVER)
         self.assertEqual(store.load_snapshot(path, vt3.DRIVER), vt3_raw())
-
-
-class Legacy(unittest.TestCase):
-    def test_ashark_dpi(self):
-        _, sets = cli.legacy_ashark(x11.DRIVER, ["dpi", "--stages", "800,1600", "--active", "2"])
-        self.assertEqual(sets[:3], ["dpi.stage1=800", "dpi.stage2=1600", "dpi.stage3=off"])
-        self.assertEqual(sets[-1], "dpi.active=2")
-        _, sets = cli.legacy_ashark(x11.DRIVER, ["--device", "dongle", "light", "--mode", "static",
-                                                 "--color", "ff8800"])
-        self.assertEqual(sets, ["light.mode=static", "light.color=ff8800"])
-
-    def test_vt3pro_sensor_and_debounce(self):
-        _, sets = cli.legacy_vt3pro(vt3.DRIVER, ["sensor", "--ripple", "off", "--motion-sync", "on"])
-        self.assertEqual(sets, ["motion_sync=on", "ripple=off"])
-        _, sets = cli.legacy_vt3pro(vt3.DRIVER, ["debounce", "--press", "4"])
-        self.assertEqual(sets, ["debounce.press=4"])
-
-    def test_every_legacy_assignment_is_a_valid_key(self):
-        for drv, argv in ((x11.DRIVER, ["sleep", "--idle", "1.5", "--deep", "20"]),
-                          (x11.DRIVER, ["debounce", "10"]), (vt3.DRIVER, ["sleep", "15"]),
-                          (vt3.DRIVER, ["dpi", "--stages", "400,800,1200,1600,3200,6400,26000"])):
-            _, sets = cli.LEGACY[drv.id](drv, argv)
-            for s, v in cli.parse_assignments(drv, sets):
-                s.assign(copy_raw(x11_raw() if drv is x11.DRIVER else vt3_raw()), "dongle", v)
 
 
 class InstallUdev(unittest.TestCase):

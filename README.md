@@ -14,7 +14,7 @@ Supported:
 ## Install
 
 ```bash
-./install.sh            # symlinks mousectl, ashark, vt3pro into ~/.local/bin
+./install.sh            # symlinks mousectl into ~/.local/bin
 mousectl install-udev   # only if you get permission errors
 ```
 
@@ -39,13 +39,10 @@ that answers is used (settings live in the mouse, so either will do).
 Before the first write to a mouse, its untouched settings are saved to
 `~/.config/mousectl/<id>/auto-backup.json` (`mousectl restore` it to go back).
 
-The old command lines still work: `ashark dpi --stages 800,1600`,
-`vt3pro sensor --ripple off`, … (also as `mousectl ashark …`).
-
 ## Layout
 
 ```
-bin/mousectl            launcher (also run as ashark / vt3pro)
+bin/mousectl            launcher
 mousectl/core/          hidraw, Driver/Session, Setting schema, backups
 mousectl/drivers/       one module per mouse
 mousectl/tui/           the schema-driven curses TUI

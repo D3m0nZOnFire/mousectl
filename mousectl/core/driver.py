@@ -61,7 +61,7 @@ class Session:
 class Driver:
     id = ""                 # stable, used for -m and config paths
     name = ""               # human name
-    aliases = ()            # legacy command names (ashark, vt3pro)
+    aliases = ()            # short names for -m (ashark, vt3pro)
     links = {}              # {(vid, pid): mode}
     link_order = ()         # preferred link order, e.g. ("wired", "dongle")
     settings = []           # [Setting]

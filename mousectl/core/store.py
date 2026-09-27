@@ -7,17 +7,11 @@ there is always a way back to how the mouse came.
 
 import json
 import os
-import shutil
 import time
 
 from .settings import copy_raw
 
 CONFIG_DIR = os.path.expanduser(os.environ.get("MOUSECTL_CONFIG", "~/.config/mousectl"))
-
-# Backups left by the old single-model tools, adopted on first use.
-LEGACY_BACKUPS = {
-    "rapoo-vt3pro": os.path.expanduser("~/.config/rapoo-vt3pro/auto-backup.json"),
-}
 
 
 def driver_dir(driver):
@@ -49,12 +43,11 @@ def write_snapshot(path, driver, mode, raw):
 
 
 def load_snapshot(path, driver):
-    """Raw units from a snapshot file, validated against `driver`.
-    Files from the old vt3pro tool (no "driver" field) are accepted."""
+    """Raw units from a snapshot file, validated against `driver`."""
     with open(path) as f:
         saved = json.load(f)
-    if saved.get("driver", driver.id) != driver.id:
-        raise ValueError(f"{path} is a {saved['driver']} snapshot, not {driver.id}")
+    if saved.get("driver") != driver.id:
+        raise ValueError(f"{path} is a {saved.get('driver')} snapshot, not {driver.id}")
     raw = {driver.parse_unit(u): bytearray.fromhex(h) for u, h in saved["blocks"].items()}
     if set(raw) != set(driver.units):
         raise ValueError(f"{path} does not contain the {driver.name} settings blocks")
@@ -67,11 +60,6 @@ def ensure_backup(session, raw):
     driver = session.link.driver
     path = auto_backup_path(driver)
     if os.path.exists(path):
-        return
-    legacy = LEGACY_BACKUPS.get(driver.id)
-    if legacy and os.path.exists(legacy):
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        shutil.copyfile(legacy, path)
         return
     full = copy_raw(raw)
     missing = [u for u in driver.units if u not in full]
