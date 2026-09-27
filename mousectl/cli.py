@@ -9,6 +9,8 @@ import argparse
 import getpass
 import json
 import os
+import pwd
+import re
 import sys
 
 from .core import store
@@ -275,6 +277,13 @@ def cmd_tui(args):
 
 def cmd_install_udev(args):
     owner = args.owner or getpass.getuser()
+    # The name goes verbatim into OWNER="..." of a root-installed rule.
+    if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*\$?", owner):
+        die(f"invalid user name: {owner!r}")
+    try:
+        pwd.getpwnam(owner)
+    except KeyError:
+        die(f"no such user: {owner!r}")
     path = os.path.join(store.CONFIG_DIR, "99-mousectl.rules")
     os.makedirs(store.CONFIG_DIR, exist_ok=True)
     with open(path, "w") as f:

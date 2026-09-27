@@ -214,5 +214,12 @@ class Legacy(unittest.TestCase):
                 s.assign(copy_raw(x11_raw() if drv is x11.DRIVER else vt3_raw()), "dongle", v)
 
 
+class InstallUdev(unittest.TestCase):
+    def test_rejects_injected_owner(self):
+        for owner in ['me", RUN+="/some/script', "no such user", "nosuchuser-mousectl"]:
+            with self.assertRaises(SystemExit):
+                cli.cmd_install_udev(cli.argparse.Namespace(owner=owner))
+
+
 if __name__ == "__main__":
     unittest.main()
