@@ -49,7 +49,6 @@ mousectl/core/          hidraw, Driver/Session, Setting schema, backups
 mousectl/drivers/       one module per mouse
 mousectl/tui/           the schema-driven curses TUI
 tests/                  python3 -m unittest
-legacy/                 the original single-model scripts, for reference
 ```
 
 New mouse? See [docs/ADDING_A_DRIVER.md](docs/ADDING_A_DRIVER.md).
