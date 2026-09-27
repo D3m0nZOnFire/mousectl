@@ -52,7 +52,7 @@ class X11Codec(unittest.TestCase):
 
 
 class X11Schema(unittest.TestCase):
-    def test_decode_matches_old_tool(self):
+    def test_decode_matches_golden(self):
         g = GOLDEN["attackshark-x11"]["decoded"]
         raw, d = x11_raw(), x11.DRIVER
         for i in range(8):
@@ -103,7 +103,7 @@ class X11Schema(unittest.TestCase):
 
 
 class VT3Schema(unittest.TestCase):
-    def test_decode_matches_old_tool(self):
+    def test_decode_matches_golden(self):
         raw, d = vt3_raw(), vt3.DRIVER
         for mode in ("dongle", "wired"):
             g = GOLDEN["rapoo-vt3pro"]["decoded"][mode]
