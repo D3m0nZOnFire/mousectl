@@ -22,6 +22,28 @@ def auto_backup_path(driver):
     return os.path.join(driver_dir(driver), "auto-backup.json")
 
 
+def _last_mouse_path():
+    return os.path.join(CONFIG_DIR, "tui-last-mouse")
+
+
+def load_last_mouse():
+    """Driver id of the mouse the TUI showed last, or None."""
+    try:
+        with open(_last_mouse_path()) as f:
+            return f.read().strip() or None
+    except OSError:
+        return None
+
+
+def save_last_mouse(driver_id):
+    try:
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        with open(_last_mouse_path(), "w") as f:
+            f.write(driver_id + "\n")
+    except OSError:
+        pass    # a convenience only; never worth failing the TUI over
+
+
 def snapshot(driver, mode, raw):
     return {
         "driver": driver.id,

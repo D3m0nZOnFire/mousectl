@@ -98,7 +98,7 @@ def run_with_spinner(state, draw, fn):
     static glyph. The spinner thread only ever reads state and draws --
     it never touches the device -- and is always joined (in `finally`)
     before this function returns, so by the time the caller does anything
-    else with curses or the hardware, exactly one thread is active again.
+    else with curses, it is the only thread drawing again.
     """
     stop = threading.Event()
 

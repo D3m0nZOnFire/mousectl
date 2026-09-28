@@ -7,15 +7,20 @@ Apply replays only the chosen group's edits onto the device's bytes (see
 settings.replay), so pending edits in another group that share a unit stay
 pending.
 
-Device I/O stays synchronous, single-threaded and is only ever triggered by
-an explicit keypress -- no timers, no background polling -- because these
-firmwares are timing-sensitive (the X11 stalls its control endpoint when
-rushed, the VT3 PRO dongle answers stale data). The one extra thread is the
-screen-only spinner in widgets.run_with_spinner, always joined before any
-further curses or device work.
+Device I/O is only ever triggered by startup or an explicit keypress -- no
+timers, no background polling -- because these firmwares are
+timing-sensitive (the X11 stalls its control endpoint when rushed, the
+VT3 PRO dongle answers stale data). Reads run on a worker thread per mouse
+so a dongle with no mouse behind it (which only gives up after its retries)
+never blocks the keyboard; each mouse has at most one job in flight, so no
+device ever sees two exchanges at once. Workers only post results to a
+queue; all state and curses work stays on the main thread. Writes (apply)
+stay blocking on the main thread and wait until that mouse is idle.
 """
 
 import curses
+import queue
+import threading
 
 from ..core import store
 from ..core.driver import DeviceError, discover
@@ -28,24 +33,71 @@ BATTERY = "Battery"
 SIDEBAR_W = 24
 
 
-class State:
-    def __init__(self, mice):
-        self.mice = mice
-        self.mouse_idx = 0
+class View:
+    """Everything the TUI knows about one mouse. Kept per mouse so switching
+    is instant and pending edits survive it."""
+
+    def __init__(self, mouse):
+        self.mouse = mouse
         self.link_idx = 0
         self.device_raw = {}    # unit -> bytearray, as last read from / written to the device
         self.raw = {}           # local copy with pending edits
         self.battery = None     # (pct, state) | None
         self.battery_loading = False
+        self.loading = False
+        self.error = None       # last read failure, while there is no snapshot
+        self.section = 0
+        self.field = 0
+        self.job = None         # worker thread talking to this mouse
+        self.job_kind = None    # "all" | "battery"
+
+    @property
+    def link(self):
+        return self.mouse.links[self.link_idx]
+
+    def busy(self):
+        return self.job is not None and self.job.is_alive()
+
+    def dirty(self, group=None):
+        if not self.raw:
+            return []
+        return dirty_settings(self.mouse.driver.settings, self.device_raw, self.raw,
+                              self.link.mode, group)
+
+
+def _forward(name):
+    return property(lambda self: getattr(self.view, name),
+                    lambda self, v: setattr(self.view, name, v))
+
+
+class State:
+    def __init__(self, mice, mouse_idx=0):
+        self.views = [View(m) for m in mice]
+        self.mouse_idx = mouse_idx
+        self.results = queue.Queue()    # (view, kind, payload) from workers
         self.spinner_frame = SPINNER_FRAMES[0]
         self.message = "Reading device..."
         self.message_kind = "info"
-        self.section = 0
-        self.field = 0
+
+    link_idx = _forward("link_idx")
+    device_raw = _forward("device_raw")
+    raw = _forward("raw")
+    battery = _forward("battery")
+    battery_loading = _forward("battery_loading")
+    section = _forward("section")
+    field = _forward("field")
+
+    @property
+    def mice(self):
+        return [v.mouse for v in self.views]
+
+    @property
+    def view(self):
+        return self.views[self.mouse_idx]
 
     @property
     def mouse(self):
-        return self.mice[self.mouse_idx]
+        return self.view.mouse
 
     @property
     def driver(self):
@@ -53,7 +105,7 @@ class State:
 
     @property
     def link(self):
-        return self.mouse.links[self.link_idx]
+        return self.view.link
 
     @property
     def mode(self):
@@ -77,9 +129,10 @@ class State:
         return f[self.field] if self.raw and self.field < len(f) else None
 
     def dirty(self, group=None):
-        if not self.raw:
-            return []
-        return dirty_settings(self.driver.settings, self.device_raw, self.raw, self.mode, group)
+        return self.view.dirty(group)
+
+    def any_dirty(self):
+        return any(v.dirty() for v in self.views)
 
     def say(self, msg, kind="info"):
         self.message, self.message_kind = msg, kind
@@ -152,33 +205,97 @@ def edit_companion(stdscr, state):
 
 # ------------------------------------------------------- device operations
 
+def start_read(state, view, kind="all"):
+    """Read settings (kind "all", then battery) or just the battery on a
+    worker thread; results arrive through state.results (see drain)."""
+    if view.busy():
+        return False
+    link, results = view.link, state.results
+    if kind == "all":
+        view.raw, view.device_raw, view.battery, view.error = {}, {}, None, None
+        view.loading = True
+    view.battery_loading = True
+
+    def work():
+        try:
+            with link.open() as s:
+                if kind == "all":
+                    results.put((view, "raw", s.read()))
+                    try:
+                        bat = s.battery()
+                    except DeviceError:
+                        bat = None
+                else:
+                    bat = s.battery()
+                results.put((view, "battery", bat))
+        except DeviceError as e:
+            results.put((view, "error", str(e)))
+        except Exception as e:  # never leave the view spinning forever
+            results.put((view, "error", f"{type(e).__name__}: {e}"))
+        finally:
+            results.put((view, "done", None))
+
+    view.job_kind = kind
+    view.job = threading.Thread(target=work, daemon=True)
+    view.job.start()
+    return True
+
+
+def drain(state):
+    """Fold finished worker results into their views (main thread only).
+    Results for views dropped by a rescan are ignored."""
+    while True:
+        try:
+            view, kind, data = state.results.get_nowait()
+        except queue.Empty:
+            return
+        if not any(v is view for v in state.views):
+            continue
+        cur = view is state.view
+        if kind == "raw":
+            view.device_raw, view.raw = data, copy_raw(data)
+            view.loading = False
+            if cur:
+                state.say("Reading battery...")
+        elif kind == "battery":
+            view.battery, view.battery_loading = data, False
+            if cur and view.job_kind == "all":
+                state.say("Refreshed.")
+            elif cur and data:
+                state.say("Battery updated.")
+            elif cur:
+                state.say("No battery report -- try again.", "error")
+        elif kind == "error":
+            if view.job_kind == "all":
+                view.error = data
+            view.loading = view.battery_loading = False
+            if cur:
+                state.say(data, "error")
+        elif kind == "done":
+            view.loading = view.battery_loading = False
+            view.job = None
+
+
+def still_busy(state):
+    if state.view.busy():
+        state.say(f"Still talking to the {state.mouse.name} -- wait for it.")
+        return True
+    return False
+
+
 def refresh(stdscr, state, confirm_if_dirty=True):
+    if still_busy(state):
+        return
     if confirm_if_dirty and state.dirty():
         if not confirm(stdscr, "Unapplied edits will be discarded. Refresh? [y/N] "):
             return
-    state.raw = {}
-    state.battery = None
+    start_read(state, state.view)
     state.say("Reading device...")
-    draw = lambda: render(stdscr, state)
-    try:
-        with state.link.open() as s:
-            dev_raw = run_with_spinner(state, draw, s.read)
-            state.device_raw = dev_raw
-            state.raw = copy_raw(dev_raw)
-            state.battery_loading = True
-            state.say("Reading battery...")
-            try:
-                state.battery = run_with_spinner(state, draw, s.battery)
-            except DeviceError:
-                state.battery = None
-            finally:
-                state.battery_loading = False
-        state.say("Refreshed.")
-    except DeviceError as e:
-        state.say(str(e), "error")
 
 
 def apply(stdscr, state, groups, label):
+    if still_busy(state):
+        return
     groups = [g for g in groups if state.dirty(g)]
     if not groups:
         state.say(f"Nothing to apply in {label}.")
@@ -199,39 +316,51 @@ def apply(stdscr, state, groups, label):
 
 
 def read_battery(stdscr, state):
-    state.battery_loading = True
+    if still_busy(state):
+        return
+    start_read(state, state.view, "battery")
     state.say("Reading battery... (move/click the mouse if nothing appears)")
-    try:
-        with state.link.open() as s:
-            state.battery = run_with_spinner(state, lambda: render(stdscr, state), s.battery)
-        state.say("Battery updated." if state.battery else "No battery report -- try again.",
-                  "info" if state.battery else "error")
-    except DeviceError as e:
-        state.say(str(e), "error")
-    finally:
-        state.battery_loading = False
+
+
+def describe(state):
+    """Status line for the view just switched to."""
+    v = state.view
+    if v.loading:
+        state.say("Reading device...")
+    elif v.error and not v.raw:
+        state.say(v.error, "error")
+    else:
+        state.say(f"{state.mouse.name}.")
 
 
 def switch(stdscr, state, what):
-    if what == "link" and len(state.mouse.links) < 2:
-        state.say("Only one connection present -- nothing to switch to.")
+    if what == "link":
+        if len(state.mouse.links) < 2:
+            state.say("Only one connection present -- nothing to switch to.")
+            return
+        if still_busy(state):
+            return
+        if state.dirty() and not confirm(stdscr, "Unapplied edits will be discarded. Switch link? [y/N] "):
+            return
+        state.link_idx = (state.link_idx + 1) % len(state.mouse.links)
+        refresh(stdscr, state, confirm_if_dirty=False)
         return
-    if what == "mouse" and len(state.mice) < 2:
+    if len(state.mice) < 2:
         state.say("Only one mouse connected.")
         return
-    if state.dirty() and not confirm(stdscr, f"Unapplied edits will be discarded. Switch {what}? [y/N] "):
-        return
-    if what == "link":
-        state.link_idx = (state.link_idx + 1) % len(state.mouse.links)
-    else:
-        state.mouse_idx = (state.mouse_idx + 1) % len(state.mice)
-        state.link_idx = 0
-        state.section = state.field = 0
-    refresh(stdscr, state, confirm_if_dirty=False)
+    # Instant: each mouse keeps its own snapshot and edits. Only a mouse
+    # with nothing to show yet (e.g. its last read failed) is read again.
+    state.mouse_idx = (state.mouse_idx + 1) % len(state.views)
+    if not state.raw and not state.view.busy():
+        start_read(state, state.view)
+    describe(state)
 
 
 def rescan(stdscr, state, args):
-    if state.dirty() and not confirm(stdscr, "Unapplied edits will be discarded. Rescan? [y/N] "):
+    if any(v.busy() for v in state.views):
+        state.say("Still reading a mouse -- rescan in a moment.")
+        return
+    if state.any_dirty() and not confirm(stdscr, "Unapplied edits will be discarded. Rescan? [y/N] "):
         return
     mice = discover(DRIVERS)
     if getattr(args, "mouse", None):
@@ -240,12 +369,11 @@ def rescan(stdscr, state, args):
         state.say("No supported mouse found.", "error")
         return
     current = state.driver.id
-    state.mice = mice
+    state.views = [View(m) for m in mice]
     state.mouse_idx = next((i for i, m in enumerate(mice) if m.driver.id == current), 0)
-    state.link_idx = 0
-    state.section = min(state.section, len(state.sections) - 1)
-    state.field = 0
-    refresh(stdscr, state, confirm_if_dirty=False)
+    for v in state.views:
+        start_read(state, v)
+    state.say("Reading device...")
 
 
 # -------------------------------------------------------------------- draw
@@ -261,7 +389,10 @@ def render(stdscr, state):
             cur = i == state.mouse_idx
             safe_addstr(stdscr, 2 + i * 2, 0, (("> " if cur else "  ") + m.name)[:SIDEBAR_W],
                         curses.A_BOLD if cur else 0)
-            safe_addstr(stdscr, 3 + i * 2, 4, " / ".join(l.mode for l in m.links)[:SIDEBAR_W - 4],
+            v = state.views[i]
+            status = (f"  {state.spinner_frame}" if v.loading else
+                      "  no answer" if v.error and not v.raw else "")
+            safe_addstr(stdscr, 3 + i * 2, 4, (" / ".join(l.mode for l in m.links) + status)[:SIDEBAR_W - 4],
                         curses.A_DIM)
         for y in range(h - 3):
             safe_addstr(stdscr, y, SIDEBAR_W, "│", curses.A_DIM)
@@ -296,8 +427,11 @@ def render(stdscr, state):
             y += 2
             continue
         if not raw:
-            safe_addstr(stdscr, y, x0 + 2, f"{state.spinner_frame} Loading...",
-                        curses.color_pair(C_PENDING) | curses.A_DIM)
+            if state.view.loading:
+                safe_addstr(stdscr, y, x0 + 2, f"{state.spinner_frame} Loading...",
+                            curses.color_pair(C_PENDING) | curses.A_DIM)
+            else:
+                safe_addstr(stdscr, y, x0 + 2, "-- no answer: press 'r' to retry --", curses.A_DIM)
             y += 2
             continue
         dirty = set(s.key for s in state.dirty(group))
@@ -344,7 +478,7 @@ def render(stdscr, state):
 
 def handle_key(stdscr, state, ch, args):
     if ch in (ord("q"), 27):
-        return bool(state.dirty()) and not confirm(stdscr, "Unapplied edits will be lost. Quit? [y/N] ")
+        return state.any_dirty() and not confirm(stdscr, "Unapplied edits will be lost. Quit? [y/N] ")
     n_fields = max(1, len(state.fields())) if state.group != BATTERY else 1
     if ch == 9:  # Tab
         state.section = (state.section + 1) % len(state.sections)
@@ -389,12 +523,25 @@ def handle_key(stdscr, state, ch, args):
 def _main(stdscr, mice, args):
     curses.curs_set(0)
     init_colors()
-    state = State(mice)
-    refresh(stdscr, state, confirm_if_dirty=False)
-    while True:
-        render(stdscr, state)
-        if not handle_key(stdscr, state, stdscr.getch(), args):
-            return
+    last = store.load_last_mouse()
+    state = State(mice, next((i for i, m in enumerate(mice) if m.driver.id == last), 0))
+    for v in state.views:
+        start_read(state, v)
+    # getch times out so worker results and the spinner show up unprompted.
+    stdscr.timeout(80)
+    tick = 0
+    try:
+        while True:
+            drain(state)
+            if any(v.loading or v.battery_loading for v in state.views):
+                tick += 1
+                state.spinner_frame = SPINNER_FRAMES[tick % len(SPINNER_FRAMES)]
+            render(stdscr, state)
+            ch = stdscr.getch()
+            if ch != -1 and not handle_key(stdscr, state, ch, args):
+                return
+    finally:
+        store.save_last_mouse(state.driver.id)
 
 
 def run(mice, args):
