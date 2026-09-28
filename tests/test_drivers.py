@@ -250,5 +250,46 @@ class InstallUdev(unittest.TestCase):
                 cli.cmd_install_udev(cli.argparse.Namespace(owner=owner))
 
 
+class FakeScreen:
+    """Just enough of a curses window for the waiting screen."""
+
+    def __init__(self, keys):
+        self.keys = list(keys)
+        self.text = []
+
+    def getmaxyx(self):
+        return 24, 80
+
+    def addstr(self, y, x, text, attr=0):
+        self.text.append(text)
+
+    def getch(self):
+        return self.keys.pop(0) if self.keys else -1
+
+    def erase(self): pass
+    def refresh(self): pass
+    def timeout(self, ms): pass
+
+
+class TuiNoMouse(unittest.TestCase):
+    def test_tui_opens_without_a_mouse(self):
+        from unittest import mock
+        with mock.patch.object(cli, "discover", return_value=[]), \
+                mock.patch("mousectl.tui.app.run") as run:
+            cli.cmd_tui(cli.argparse.Namespace(mouse=None, link=None))
+        self.assertEqual(run.call_args.args[0], [])
+
+    def test_waiting_screen_quits_on_q(self):
+        from mousectl.tui import app
+        scr = FakeScreen([ord("q")])
+        self.assertIsNone(app.wait_for_mice(scr, lambda: [], "supported mouse"))
+        self.assertTrue(any("No supported mouse connected" in t for t in scr.text), scr.text)
+
+    def test_waiting_screen_returns_once_a_mouse_appears(self):
+        from mousectl.tui import app
+        scans = iter([[], [], ["x11"]])
+        self.assertEqual(app.wait_for_mice(FakeScreen([]), lambda: next(scans), "supported mouse"), ["x11"])
+
+
 if __name__ == "__main__":
     unittest.main()

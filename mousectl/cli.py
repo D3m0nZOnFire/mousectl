@@ -24,16 +24,27 @@ def die(msg):
 
 # ------------------------------------------------------------- selection
 
-def select_mice(args, one=False):
-    mice = discover(DRIVERS)
+def wanted_driver(args):
+    """The driver -m names, or None when no -m was given."""
     want = getattr(args, "mouse", None)
-    if want:
-        drv = find(want)
-        if not drv:
-            die(f"unknown mouse '{want}' (known: {', '.join(d.id for d in DRIVERS)})")
-        mice = [m for m in mice if m.driver is drv]
-        if not mice:
-            die(f"no {drv.name} connected")
+    if not want:
+        return None
+    drv = find(want)
+    if not drv:
+        die(f"unknown mouse '{want}' (known: {', '.join(d.id for d in DRIVERS)})")
+    return drv
+
+
+def scan_mice(drv):
+    mice = discover(DRIVERS)
+    return [m for m in mice if m.driver is drv] if drv else mice
+
+
+def select_mice(args, one=False):
+    drv = wanted_driver(args)
+    mice = scan_mice(drv)
+    if drv and not mice:
+        die(f"no {drv.name} connected")
     if not mice:
         die("no supported mouse found (is it plugged in / the dongle connected?)")
     if one and len(mice) > 1:
@@ -270,7 +281,10 @@ def cmd_restore(args):
 
 def cmd_tui(args):
     from .tui.app import run
-    run(select_mice(args), args)
+    # No mouse yet is fine: the TUI waits for one instead of exiting.
+    drv = wanted_driver(args)
+    run(scan_mice(drv), args, scan=lambda: scan_mice(drv),
+        wanted=drv.name if drv else "supported mouse")
 
 
 def cmd_install_udev(args):

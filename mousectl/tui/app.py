@@ -520,9 +520,38 @@ def handle_key(stdscr, state, ch, args):
     return True
 
 
-def _main(stdscr, mice, args):
+def wait_for_mice(stdscr, scan, wanted):
+    """Shown while nothing is connected. Rescans about once a second --
+    discovery only reads sysfs, never the devices -- and returns the mice
+    as soon as one turns up, or None if the user quits."""
+    stdscr.timeout(1000)
+    while True:
+        mice = scan()
+        if mice:
+            return mice
+        stdscr.erase()
+        h, w = stdscr.getmaxyx()
+        lines = [(f"No {wanted} connected.", curses.A_BOLD),
+                 ("", 0),
+                 ("Plug in the mouse or its dongle -- it will show up here by itself.", 0),
+                 ("", 0),
+                 ("R:rescan now  q:quit", curses.A_DIM)]
+        y = max(0, (h - len(lines)) // 2)
+        for i, (text, attr) in enumerate(lines):
+            safe_addstr(stdscr, y + i, max(0, (w - len(text)) // 2), text[:w - 1], attr)
+        stdscr.refresh()
+        if stdscr.getch() in (ord("q"), 27):
+            return None
+
+
+def _main(stdscr, mice, args, scan, wanted):
     curses.curs_set(0)
     init_colors()
+    if not mice:
+        mice = wait_for_mice(stdscr, scan, wanted)
+        if not mice:
+            return
+        apply_link_filter(mice, args)
     last = store.load_last_mouse()
     state = State(mice, next((i for i, m in enumerate(mice) if m.driver.id == last), 0))
     for v in state.views:
@@ -544,8 +573,12 @@ def _main(stdscr, mice, args):
         store.save_last_mouse(state.driver.id)
 
 
-def run(mice, args):
+def apply_link_filter(mice, args):
     if getattr(args, "link", None):
         for m in mice:
             m.links = [l for l in m.links if l.mode == args.link] or m.links
-    curses.wrapper(_main, mice, args)
+
+
+def run(mice, args, scan=lambda: [], wanted="supported mouse"):
+    apply_link_filter(mice, args)
+    curses.wrapper(_main, mice, args, scan, wanted)
