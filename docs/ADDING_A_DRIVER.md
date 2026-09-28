@@ -142,11 +142,19 @@ A test that can't pass on your mouse isn't a blocker. Say why in the PR.
 3. Make one commit (or a few) titled like the existing ones:
    `Add <Vendor Model> driver`.
 4. `git push -u origin add-<driver-id>`.
-5. Open the PR **with the new-driver template**:
-   - `gh pr create --template new-driver.md --title "Add <Vendor Model> driver"`, or
-   - on github.com, open the "Compare & pull request" page and add
-     `?template=new-driver.md` to its URL (`&template=new-driver.md` if the
-     URL already has a `?`).
+5. Open the PR **with the new-driver template**, whichever way you prefer:
+   - with the GitHub CLI:
+     `gh pr create --template new-driver.md --title "Add <Vendor Model> driver"`
+   - in the browser, straight to the filled-in PR form for your branch (run it
+     from your clone; it reads your fork from `origin`):
+
+     ```bash
+     xdg-open "https://github.com/D3m0nZOnFire/mousectl/compare/main...$(git remote get-url origin \
+       | sed -E 's#^(git@github\.com:|https://github\.com/)##; s#\.git$##; s#/#:#'):$(git branch --show-current)?quick_pull=1&template=new-driver.md"
+     ```
+
+   - or edit this link by hand, replacing `YOUR-USER` and `YOUR-BRANCH`:
+     `https://github.com/D3m0nZOnFire/mousectl/compare/main...YOUR-USER:mousectl:YOUR-BRANCH?quick_pull=1&template=new-driver.md`
 6. Fill in every field:
    - **Mouse**: vendor/model, driver id and aliases, the `lsusb` id of each
      link, the firmware version, and where the protocol came from (your own USB
