@@ -1,0 +1,41 @@
+{
+  "driver": "attackshark-x11",
+  "mode": "dongle",
+  "saved": "2026-09-28 10:22:20",
+  "blocks": {
+    "0x04": "04380101000e20201225384b75810000000000000001000002ff000000ff000000ffffff0000ffffff00ffff4000ffffff020f3700000000",
+    "0x05": "050f010003a5ff0000010401ac0000",
+    "0x06": "06090102fd00000000"
+  },
+  "decoded": {
+    "dpi.stage1": "off",
+    "dpi.stage1.color": "#ff0000",
+    "dpi.stage2": 1600,
+    "dpi.stage2.color": "#00ff00",
+    "dpi.stage3": 2400,
+    "dpi.stage3.color": "#0000ff",
+    "dpi.stage4": 3200,
+    "dpi.stage4.color": "#ffff00",
+    "dpi.stage5": "off",
+    "dpi.stage5.color": "#00ffff",
+    "dpi.stage6": "off",
+    "dpi.stage6.color": "#ff00ff",
+    "dpi.stage7": "off",
+    "dpi.stage7.color": "#ff4000",
+    "dpi.stage8": "off",
+    "dpi.stage8.color": "#ffffff",
+    "dpi.active": 2,
+    "polling": 500,
+    "angle_snap": true,
+    "ripple": false,
+    "motion_sync": false,
+    "lod": 0,
+    "light.mode": "off",
+    "light.color": "#ff0000",
+    "light.brightness": 5,
+    "light.speed": 3,
+    "debounce": 8,
+    "sleep": 0.5,
+    "sleep.deep": 10
+  }
+}

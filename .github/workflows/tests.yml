@@ -1,0 +1,33 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unittest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.11", "3.14"]   # 3.9 is the minimum bin/mousectl promises
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Byte-compile everything
+        run: python -m compileall -q mousectl tests
+      - name: Unit and driver contract tests
+        run: python -m unittest -v
+      - name: CLI starts without a mouse
+        env:
+          PYTHON: python
+        run: |
+          bin/mousectl --help > /dev/null
+          bin/mousectl keys --help > /dev/null
+          bin/mousectl list

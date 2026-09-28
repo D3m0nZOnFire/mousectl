@@ -1,0 +1,31 @@
+{
+  "driver": "pulsar-x3",
+  "mode": "dongle",
+  "saved": "2026-09-28 10:22:20",
+  "blocks": {
+    "dpi": "030601900190010220032003034006400604800c800c05001900190600320032",
+    "lod": "0a",
+    "polling": "08",
+    "angle_snap": "00",
+    "ripple": "00",
+    "motion_sync": "00",
+    "debounce": "03",
+    "sleep": "1e00"
+  },
+  "decoded": {
+    "dpi.stage1": 400,
+    "dpi.stage2": 800,
+    "dpi.stage3": 1600,
+    "dpi.stage4": 3200,
+    "dpi.stage5": 6400,
+    "dpi.stage6": 12800,
+    "dpi.active": 3,
+    "polling": 1000,
+    "motion_sync": false,
+    "angle_snap": false,
+    "ripple": false,
+    "lod": 1,
+    "debounce": 3,
+    "sleep": 0.5
+  }
+}

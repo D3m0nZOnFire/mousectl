@@ -1,0 +1,35 @@
+{
+  "driver": "rapoo-vt3pro",
+  "mode": "dongle",
+  "saved": "2026-09-28 10:22:20",
+  "blocks": {
+    "0x880": "04ff01ff",
+    "0x884": "02010100",
+    "0x888": "90012003b0044006800c001990650600",
+    "0x898": "04000201",
+    "0x8c0": "08080a03",
+    "0x8c4": "00000100",
+    "0x8c8": "90012003b0044006800c001990650600"
+  },
+  "decoded": {
+    "dpi.stage1": 400,
+    "dpi.stage2": 800,
+    "dpi.stage3": 1200,
+    "dpi.stage4": 1600,
+    "dpi.stage5": 3200,
+    "dpi.stage6": 6400,
+    "dpi.stage7": 26000,
+    "dpi.active": 5,
+    "polling": 250,
+    "motion_sync": true,
+    "angle_snap": false,
+    "ripple": false,
+    "polling.wireless": 250,
+    "polling.wired": 1000,
+    "lod": 2,
+    "sensor_angle": 0,
+    "debounce.press": 8,
+    "debounce.release": 8,
+    "sleep": 10
+  }
+}

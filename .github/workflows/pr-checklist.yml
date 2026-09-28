@@ -1,0 +1,28 @@
+name: pr-checklist
+
+# Re-runs when the description is edited, so ticking a box fixes the check.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  form:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: New-driver template filled in
+        # Title and body go through env, never ${{ }} inside the script:
+        # they are text anyone opening a PR controls.
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: python .github/scripts/pr_checklist.py $(git diff --name-only --diff-filter=A "$BASE_SHA"...HEAD)

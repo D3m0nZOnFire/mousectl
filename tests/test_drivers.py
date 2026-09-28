@@ -243,6 +243,62 @@ class Store(unittest.TestCase):
         self.assertEqual(store.load_snapshot(path, vt3.DRIVER), vt3_raw())
 
 
+class HardwareCheck(unittest.TestCase):
+    """tests/hardware_check.py, run against a fake mouse."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self._cfg, store.CONFIG_DIR = store.CONFIG_DIR, self.tmp.name
+
+    def tearDown(self):
+        store.CONFIG_DIR = self._cfg
+        self.tmp.cleanup()
+
+    def session(self, cls=FakeSession):
+        return cls(Link(px3.DRIVER, "/dev/null", "dongle"), x3_raw())
+
+    def test_passes_and_leaves_the_mouse_as_it_was(self):
+        from tests import hardware_check
+        s = self.session()
+        results = hardware_check.check_session(s)
+        self.assertEqual([r for r in results if not r.ok], [])
+        self.assertIn("polling", [r.name for r in results])
+        self.assertIn("polling", s.writes)                  # really written to the mouse
+        self.assertEqual(s.dev, x3_raw())                   # and put back
+        self.assertTrue(os.path.exists(store.auto_backup_path(px3.DRIVER)))
+
+    def test_reports_writes_the_mouse_ignores(self):
+        from tests import hardware_check
+
+        class Deaf(FakeSession):
+            def write(self, before, after):
+                return [u for u in after if bytes(before[u]) != bytes(after[u])]
+
+        failed = {r.name for r in hardware_check.check_session(self.session(Deaf)) if not r.ok}
+        self.assertIn("polling", failed)
+        self.assertIn("dpi.stage2", failed)
+
+    def test_restores_even_when_a_check_crashes(self):
+        from tests import hardware_check
+
+        class Flaky(FakeSession):
+            def read(self, units=None):
+                if self.writes and units == ("sleep",):
+                    raise RuntimeError("unplugged")
+                return super().read(units)
+
+        s = self.session(Flaky)
+        with self.assertRaises(RuntimeError):
+            hardware_check.check_session(s)
+        self.assertEqual(s.dev, x3_raw())
+
+    def test_report_is_markdown(self):
+        from tests import hardware_check
+        text = hardware_check.report(px3.DRIVER, "dongle", hardware_check.check_session(self.session()))
+        self.assertIn("| polling |", text)
+        self.assertIn("pulsar-x3", text)
+
+
 class InstallUdev(unittest.TestCase):
     def test_rejects_injected_owner(self):
         for owner in ['me", RUN+="/some/script', "no such user", "nosuchuser-mousectl"]:
