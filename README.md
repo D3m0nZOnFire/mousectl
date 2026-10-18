@@ -18,9 +18,12 @@ Supported:
 With [pipx](https://pipx.pypa.io/):
 
 ```bash
-pipx install git+https://github.com/D3m0nZOnFire/mousectl
+pipx install "git+https://github.com/D3m0nZOnFire/mousectl@v0.1.2"
 mousectl install-udev   # only if you get permission errors
 ```
+
+To upgrade, run the same command with `--force` and the newest
+[release](https://github.com/D3m0nZOnFire/mousectl/releases) tag.
 
 Or straight from a checkout, no packaging at all:
 

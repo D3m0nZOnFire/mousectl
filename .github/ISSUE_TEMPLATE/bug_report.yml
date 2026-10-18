@@ -33,8 +33,8 @@ body:
     id: version
     attributes:
       label: mousectl version
-      description: Release tag or commit (`git rev-parse --short HEAD` in your checkout)
-      placeholder: v0.1.0
+      description: Output of `mousectl --version` (if you run from a checkout, add `git rev-parse --short HEAD`)
+      placeholder: mousectl 0.1.2
     validations:
       required: true
   - type: textarea
