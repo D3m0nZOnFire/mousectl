@@ -61,7 +61,8 @@ mousectl/tui/           the schema-driven curses TUI
 tests/                  python3 -m unittest
 ```
 
-New mouse? See [docs/ADDING_A_DRIVER.md](docs/ADDING_A_DRIVER.md).
+Where each protocol comes from and what was checked on real mice:
+[docs/PROTOCOLS.md](docs/PROTOCOLS.md). New mouse? See [docs/ADDING_A_DRIVER.md](docs/ADDING_A_DRIVER.md).
 
 ## Roadmap
 
