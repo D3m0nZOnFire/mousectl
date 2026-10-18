@@ -11,6 +11,7 @@ import pwd
 import re
 import sys
 
+from . import __version__
 from .core import store
 from .core.driver import DeviceError, discover
 from .core.settings import copy_raw
@@ -313,6 +314,7 @@ def cmd_install_udev(args):
 
 def build_parser():
     p = argparse.ArgumentParser(prog="mousectl", description="Configure gaming mice on Linux.")
+    p.add_argument("--version", action="version", version=f"mousectl {__version__}")
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("-m", "--mouse", help="driver id or alias (see 'mousectl list')")
     common.add_argument("--link", help="only use this connection (wired, dongle)")

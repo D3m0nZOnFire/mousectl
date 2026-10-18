@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mousectl"
-version = "0.1.1"
+dynamic = ["version"]
 description = "Configure gaming mice on Linux over /dev/hidraw*, without vendor software"
 readme = "README.md"
 license = "MIT"
@@ -21,6 +21,9 @@ Homepage = "https://github.com/D3m0nZOnFire/mousectl"
 
 [project.scripts]
 mousectl = "mousectl.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "mousectl.__version__" }
 
 [tool.setuptools.packages.find]
 include = ["mousectl*"]
