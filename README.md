@@ -3,6 +3,8 @@
 Configure gaming mice on Linux over `/dev/hidraw*`, without vendor software.
 Pure Python 3 standard library: no packages, no venv.
 
+<p align="center"><img src="docs/tui.png" alt="mousectl tui showing an Attack Shark X11: DPI stages, polling rate, lighting and timing" width="720"></p>
+
 Supported:
 
 | id                | mouse             | links                  | alias    |
