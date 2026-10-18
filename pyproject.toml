@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mousectl"
-version = "0.1.0"
+version = "0.1.1"
 description = "Configure gaming mice on Linux over /dev/hidraw*, without vendor software"
 readme = "README.md"
 license = "MIT"
