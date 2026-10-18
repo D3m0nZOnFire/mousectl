@@ -15,7 +15,17 @@ Supported:
 
 ## Install
 
+With [pipx](https://pipx.pypa.io/):
+
 ```bash
+pipx install git+https://github.com/D3m0nZOnFire/mousectl
+mousectl install-udev   # only if you get permission errors
+```
+
+Or straight from a checkout, no packaging at all:
+
+```bash
+git clone https://github.com/D3m0nZOnFire/mousectl && cd mousectl
 ./install.sh            # symlinks mousectl into ~/.local/bin
 mousectl install-udev   # only if you get permission errors
 ```

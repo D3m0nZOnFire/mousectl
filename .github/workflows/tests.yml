@@ -31,3 +31,8 @@ jobs:
           bin/mousectl --help > /dev/null
           bin/mousectl keys --help > /dev/null
           bin/mousectl list
+      - name: Installs as a package (pipx/pip)
+        run: |
+          python -m venv /tmp/venv
+          /tmp/venv/bin/pip install -q .
+          cd /tmp && /tmp/venv/bin/mousectl --help > /dev/null
