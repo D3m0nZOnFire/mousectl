@@ -1,0 +1,39 @@
+name: Supported mouse request
+description: Ask for a mouse that mousectl doesn't support yet
+labels: [new mouse]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        mousectl can only add a mouse once its protocol is known. If you can capture it yourself, [docs/ADDING_A_DRIVER.md](https://github.com/D3m0nZOnFire/mousectl/blob/main/docs/ADDING_A_DRIVER.md) walks you through writing the driver, and a pull request is the fastest way in.
+  - type: input
+    id: model
+    attributes:
+      label: Vendor and model
+      placeholder: Pulsar X2 V2
+    validations:
+      required: true
+  - type: textarea
+    id: lsusb
+    attributes:
+      label: USB ids
+      description: The `lsusb` line for each connection (wired, dongle).
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: features
+    attributes:
+      label: What you'd like to control
+      description: DPI, polling rate, lighting, battery, …
+  - type: textarea
+    id: protocol
+    attributes:
+      label: Known protocol sources
+      description: Other projects that already support it (with their licence), or USB captures you can share.
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Can you help?
+      options:
+        - label: I own this mouse and can test a driver on it

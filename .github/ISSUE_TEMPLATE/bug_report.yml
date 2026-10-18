@@ -1,0 +1,51 @@
+name: Bug report
+description: Something doesn't work with a supported mouse
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: The command you ran, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: dropdown
+    id: mouse
+    attributes:
+      label: Mouse
+      options:
+        - Attack Shark X11
+        - Rapoo VT3 PRO
+        - Pulsar X3
+    validations:
+      required: true
+  - type: dropdown
+    id: link
+    attributes:
+      label: Connection
+      options:
+        - Wired
+        - Dongle
+        - Both
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: mousectl version
+      description: Release tag or commit (`git rev-parse --short HEAD` in your checkout)
+      placeholder: v0.1.0
+    validations:
+      required: true
+  - type: textarea
+    id: list
+    attributes:
+      label: Output of `mousectl list` and `lsusb`
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Full error output
+      render: text
