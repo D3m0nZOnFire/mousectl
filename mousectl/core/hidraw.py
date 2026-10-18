@@ -25,21 +25,28 @@ def HIDIOCGINPUT(size):
 def parse_feature_lengths(desc):
     """Walk a HID report descriptor, return {report_id: feature payload bytes}.
 
-    Global items (report size/count) persist across collections, so they are
-    tracked as running state exactly as the HID spec requires.
+    Global items (report ID/size/count) persist across collections, so they
+    are tracked as running state exactly as the HID spec requires, including
+    Push/Pop. Bits of one report are packed across items, so they are summed
+    before rounding up to bytes. A truncated item at the end is ignored.
     """
-    out = {}
+    bits = {}
     rid = 0
     size = 0
     count = 0
+    stack = []
     i = 0
     while i < len(desc):
         b = desc[i]
-        if b == 0xFE:  # long item
-            i += 2 + desc[i + 1]
+        if b == 0xFE:  # long item: 0xFE, bDataSize, bLongItemTag, data
+            if i + 1 >= len(desc):
+                break
+            i += 3 + desc[i + 1]
             continue
         tag, blen = b & 0xFC, b & 0x03
         blen = 4 if blen == 3 else blen
+        if i + 1 + blen > len(desc):
+            break
         data = int.from_bytes(desc[i + 1:i + 1 + blen], "little") if blen else 0
         if tag == 0x84:      # Report ID
             rid = data
@@ -47,10 +54,15 @@ def parse_feature_lengths(desc):
             size = data
         elif tag == 0x94:    # Report Count
             count = data
+        elif tag == 0xA4:    # Push
+            stack.append((rid, size, count))
+        elif tag == 0xB4:    # Pop
+            if stack:
+                rid, size, count = stack.pop()
         elif tag == 0xB0:    # Feature (main item)
-            out[rid] = out.get(rid, 0) + (size * count + 7) // 8
+            bits[rid] = bits.get(rid, 0) + size * count
         i += 1 + blen
-    return out
+    return {r: (n + 7) // 8 for r, n in bits.items()}
 
 
 @dataclass
