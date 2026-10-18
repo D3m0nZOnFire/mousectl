@@ -102,6 +102,73 @@ class X11Schema(unittest.TestCase):
         self.assertEqual(val(d, raw, "dpi.stage7"), 800)
 
 
+class FakeX11(x11.X11Session):
+    """X11Session over a fake mouse that ignores the first `drops` writes,
+    the way the dongle now and then loses one."""
+    RESEND_DELAY = 0
+
+    def __init__(self, drops=0):
+        super().__init__(Link(x11.DRIVER, "/dev/null", "dongle",
+                              {"lengths": {x11.RID_DPI: 55, x11.RID_LIGHT: 14, x11.RID_POLL: 8,
+                                           x11.RID_READ: 7}}))
+        self.dev = x11_raw()
+        self.drops = drops
+        self.sets = []
+
+    def set_feature(self, payload):
+        self.sets.append(payload[0])
+        if self.drops:
+            self.drops -= 1
+            return
+        self.dev[payload[0]] = bytearray(payload)
+
+    def read_config(self, rid, retries=3):
+        return bytearray(self.dev[rid])
+
+
+class X11Write(unittest.TestCase):
+    def change(self, s, key, value):
+        before = s.read()
+        after = copy_raw(before)
+        x11.DRIVER.setting(key).assign(after, "dongle", value)
+        return before, after
+
+    def test_write_lands(self):
+        s = FakeX11()
+        before, after = self.change(s, "dpi.stage3", 2450)
+        self.assertEqual(s.write(before, after), [x11.RID_DPI])
+        self.assertEqual(val(x11.DRIVER, s.read(), "dpi.stage3"), 2450)
+        self.assertEqual(s.sets, [x11.RID_DPI])
+
+    def test_dropped_write_is_resent(self):
+        s = FakeX11(drops=2)
+        before, after = self.change(s, "sleep", 1.0)
+        s.write(before, after)
+        self.assertEqual(val(x11.DRIVER, s.read(), "sleep"), 1.0)
+        self.assertEqual(s.sets, [x11.RID_LIGHT] * 3)
+
+    def test_dropped_polling_write_is_resent(self):
+        # The poll report is sent as a fresh frame, so it's checked against that frame.
+        s = FakeX11(drops=1)
+        before, after = self.change(s, "polling", 1000)
+        s.write(before, after)
+        self.assertEqual(val(x11.DRIVER, s.read(), "polling"), 1000)
+        self.assertEqual(s.sets, [x11.RID_POLL] * 2)
+
+    def test_write_the_mouse_never_takes_raises(self):
+        s = FakeX11(drops=1000)
+        before, after = self.change(s, "dpi.stage3", 2450)
+        with self.assertRaises(x11.DeviceError):
+            s.write(before, after)
+        self.assertEqual(val(x11.DRIVER, s.read(), "dpi.stage3"), 2400)
+
+    def test_unchanged_reports_are_not_sent(self):
+        s = FakeX11()
+        before = s.read()
+        self.assertEqual(s.write(before, copy_raw(before)), [])
+        self.assertEqual(s.sets, [])
+
+
 class VT3Schema(unittest.TestCase):
     def test_decode_matches_golden(self):
         raw, d = vt3_raw(), vt3.DRIVER

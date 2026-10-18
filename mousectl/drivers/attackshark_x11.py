@@ -200,6 +200,24 @@ class X11Session(Session):
     def read(self, units=None):
         return {rid: self.read_config(rid) for rid in (units or X11.units)}
 
+    # Over the dongle a write is now and then lost: the mouse keeps the old
+    # value however long you wait, so each write is read back and resent.
+    WRITE_TRIES = 5
+    RESEND_DELAY = 0.3
+
+    def write_report(self, frame):
+        """Send a config report and read it back; a lost write is resent."""
+        rid = frame[0]
+        for attempt in range(self.WRITE_TRIES):
+            if attempt:
+                time.sleep(self.RESEND_DELAY * attempt)
+            self.set_feature(frame)
+            back = self.read_config(rid)
+            if bytes(back) == bytes(frame):
+                return back
+        raise DeviceError(f"the mouse did not take the write to report 0x{rid:02x} "
+                          f"after {self.WRITE_TRIES} tries -- check the connection and retry")
+
     def write(self, before, after):
         written = []
         for rid in X11.units:
@@ -207,16 +225,14 @@ class X11Session(Session):
                 continue
             buf = after[rid]
             if rid == RID_DPI:
-                self.set_feature(seal_dpi(buf)[:self.report_len(rid)])
+                frame = seal_dpi(buf)[:self.report_len(rid)]
             elif rid == RID_LIGHT:
-                self.set_feature(seal_light(buf)[:self.report_len(rid)])
+                frame = seal_light(buf)[:self.report_len(rid)]
             else:
-                # The poll report is write-only in practice: always send a
-                # fresh frame, like the vendor software.
+                # Always send a fresh poll frame, like the vendor software.
                 frame = bytearray(self.report_len(RID_POLL))
                 frame[0:5] = bytes([RID_POLL, 0x09, 0x01, buf[3], 0xFF - buf[3]])
-                self.set_feature(frame)
-            before[rid] = bytearray(buf)
+            before[rid] = self.write_report(frame)
             written.append(rid)
         return written
 
