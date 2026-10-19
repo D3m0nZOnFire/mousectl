@@ -82,7 +82,7 @@ class X3Session(Session):
         try:
             self.fd = os.open(self.link.path, os.O_RDWR)
         except PermissionError:
-            raise DeviceError(f"no permission to open {self.link.path} -- run 'mousectl install-udev'")
+            raise DeviceError(f"no permission to open {self.link.path} -- run 'mousectl install-udev'", code="permission")
         except OSError as e:
             raise DeviceError(f"cannot open {self.link.path}: {e}")
         return self
@@ -126,7 +126,7 @@ class X3Session(Session):
                 return r
             time.sleep(self.POLL_S)
         raise DeviceError(f"no answer for {group:02x}/{op:02x} "
-                          f"(mouse asleep or out of range? move it and retry)")
+                          f"(mouse asleep or out of range? move it and retry)", code="no-answer")
 
     def command(self, group, op, length, profile=0, payload=b""):
         self._set(frame(group, op, length, profile, payload))

@@ -12,7 +12,15 @@ from .hidraw import enumerate_hidraw
 
 
 class DeviceError(Exception):
-    """A problem talking to one specific link (skip it, don't abort)."""
+    """A problem talking to one specific link (skip it, don't abort).
+
+    `code` is what scripts get in --json output: "permission" (no access to
+    the hidraw node), "no-answer" (mouse asleep / out of range) or "io".
+    """
+
+    def __init__(self, message, code="io"):
+        super().__init__(message)
+        self.code = code
 
 
 @dataclass

@@ -37,10 +37,14 @@ manager.
 - `write(before, after)` → list of written units: write every unit whose bytes
   differ, verifying if the device allows it. Update `before[unit]` as you go.
   Checksums etc. may be fixed up in `after` in place.
-- `battery(timeout=None)` → `(percent, state)` or `None`.
+- `battery(timeout=None)` → `(percent, state)` or `None`. `state` is one of
+  `"charging"`, `"discharging"`, `"full"`, `"unknown"` (scripts rely on these,
+  see [INTERFACE.md](INTERFACE.md)).
 
 Raise `core.driver.DeviceError` for anything link-related; the CLI then tries
-the next link.
+the next link. Give it `code="permission"` when opening the node fails with
+`PermissionError` and `code="no-answer"` when the mouse doesn't reply (asleep,
+out of range); everything else is the default `"io"`.
 
 ## 3. The settings
 

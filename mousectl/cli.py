@@ -11,7 +11,7 @@ import pwd
 import re
 import sys
 
-from . import __version__
+from . import __version__, interface
 from .core import store
 from .core.driver import DeviceError, discover
 from .core.settings import copy_raw
@@ -44,6 +44,8 @@ def scan_mice(drv):
 def select_mice(args, one=False):
     drv = wanted_driver(args)
     mice = scan_mice(drv)
+    if not mice and not one and getattr(args, "json", False):
+        return []       # scripts poll whether or not a mouse is there
     if drv and not mice:
         die(f"no {drv.name} connected")
     if not mice:
@@ -62,29 +64,43 @@ def links_of(mouse, args):
     return links
 
 
-def on_first_link(mouse, args, fn):
+def on_links(mouse, args, fn):
     """Run fn(session) on the first link that answers. Settings live in the
-    mouse, so any live link will do; later links are fallbacks."""
+    mouse, so any live link will do; later links are fallbacks.
+    Returns (link, result, errors), link None when none answered and
+    errors the [(link, DeviceError)] of the links that failed."""
     errors = []
     for link in links_of(mouse, args):
         try:
             with link.open() as s:
-                return fn(s)
+                return link, fn(s), errors
         except DeviceError as e:
-            errors.append(f"[{link.mode}] {e}")
-    for e in errors:
-        print(f"{mouse.name} {e}", file=sys.stderr)
-    return None
+            errors.append((link, e))
+    return None, None, errors
 
 
-def jsonable(v):
-    return "#%02x%02x%02x" % v if isinstance(v, tuple) else v
+def report_errors(mouse, errors):
+    for link, e in errors:
+        print(f"{mouse.name} [{link.mode}] {e}", file=sys.stderr)
+
+
+def on_first_link(mouse, args, fn):
+    link, res, errors = on_links(mouse, args, fn)
+    if link is None:
+        report_errors(mouse, errors)
+    return res
+
+
+def emit(doc):
+    print(json.dumps(doc, indent=2))
 
 
 # ------------------------------------------------------------- commands
 
 def cmd_list(args):
     mice = discover(DRIVERS)
+    if args.json:
+        return emit(interface.document(mice=[interface.listed(m) for m in mice]))
     if not mice:
         print("no supported mouse connected")
     for m in mice:
@@ -122,16 +138,15 @@ def cmd_status(args):
         def run(s):
             raw = s.read()
             bat = None if args.no_battery else read_battery(s)
-            return s.link, raw, bat
-        res = on_first_link(m, args, run)
-        if not res:
-            continue
-        link, raw, bat = res
+            return raw, bat
+        link, res, errors = on_links(m, args, run)
         if args.json:
-            out.append({"mouse": m.driver.id, "name": m.name, "link": link.mode, "path": link.path,
-                        "settings": {st.key: jsonable(st.value(raw, link.mode)) for st in m.driver.settings},
-                        "battery": {"percent": bat[0], "state": bat[1]} if bat else None})
+            out.append(interface.status(m, link, *res) if link else interface.status(m, err=errors[-1][1]))
             continue
+        if not link:
+            report_errors(m, errors)
+            continue
+        raw, bat = res
         print(f"== {link}")
         for line in status_lines(m.driver, raw, link.mode):
             print(line)
@@ -139,7 +154,14 @@ def cmd_status(args):
             print(f"  Battery: {bat[0]}%  ({bat[1]})" if bat else
                   "  Battery: unknown" + ("" if link.mode == "wired" else " (move/click the mouse and retry)"))
     if args.json:
-        print(json.dumps(out, indent=2))
+        emit(interface.document(mice=out))
+
+
+def one_mouse_doc(m, link, errors, keys, raw, **extra):
+    """get/set --json: the values of `keys`, or the error of the last link."""
+    return interface.document(**interface.mouse(m), **interface.link(link),
+                              settings=interface.settings(keys, raw, link.mode) if link else None,
+                              **extra, error=None if link else interface.error(errors[-1][1]))
 
 
 def cmd_get(args):
@@ -149,12 +171,16 @@ def cmd_get(args):
     except KeyError as e:
         die(f"{m.name} has no setting {e} -- see 'mousectl keys'")
     units = sorted({u for s in settings for u in s.units})
-    res = on_first_link(m, args, lambda s: (s.mode, s.read(units)))
-    if not res:
+    link, raw, errors = on_links(m, args, lambda s: s.read(units))
+    if args.json:
+        emit(one_mouse_doc(m, link, errors, settings, raw))
+    elif link:
+        for s in settings:
+            print(f"{s.key} = {s.format(raw, link.mode)}")
+    else:
+        report_errors(m, errors)
+    if not link:
         sys.exit(1)
-    mode, raw = res
-    for s in settings:
-        print(json.dumps(jsonable(s.value(raw, mode))) if args.json else f"{s.key} = {s.format(raw, mode)}")
 
 
 def parse_assignments(drv, items):
@@ -187,19 +213,28 @@ def cmd_set(args):
             try:
                 st.assign(after, s.mode, v)
             except ValueError as e:
-                raise SystemExit(f"mousectl: {st.key}: {e}")
-        written = store.apply(s, before, after)
+                die(f"{st.key}: {e}")
+        return after, store.apply(s, before, after)
+    link, res, errors = on_links(m, args, run)
+    after, written = res or (None, None)
+    if args.json:
+        emit(one_mouse_doc(m, link, errors, [st for st, _ in todo], after, changed=bool(written)))
+    elif link:
         for st, _ in todo:
-            print(f"[{s.mode}] {st.key} = {st.format(after, s.mode)}")
+            print(f"[{link.mode}] {st.key} = {st.format(after, link.mode)}")
         if not written:
-            print(f"[{s.mode}] (unchanged)")
-        return True
-    if not on_first_link(m, args, run):
+            print(f"[{link.mode}] (unchanged)")
+    else:
+        report_errors(m, errors)
+    if not link:
         sys.exit(1)
 
 
 def cmd_keys(args):
-    for m in select_mice(args):
+    mice = select_mice(args)
+    if args.json:
+        return emit(interface.document(mice=[interface.keys(m) for m in mice]))
+    for m in mice:
         print(f"== {m.name} ({m.driver.id})")
         for s in m.driver.settings:
             ro = "  read-only" if s.read_only else ""
@@ -207,31 +242,44 @@ def cmd_keys(args):
             print(f"  {s.key:<20} {s.kind.describe()}{off}{ro}" + (f"  -- {s.help}" if s.help else ""))
 
 
+def battery_of(m, args):
+    """(link, (percent, state), None) from the first link with a reading;
+    else (wired link, None, None) when the cable powers it (no level to
+    report); else (link, None, DeviceError) of the last one that failed."""
+    wired = failed = None
+    for link in links_of(m, args):
+        try:
+            with link.open() as s:
+                bat = s.battery(args.timeout)
+        except DeviceError as e:
+            failed = (link, e)
+            continue
+        if bat:
+            return link, bat, None
+        if link.mode == "wired":
+            wired = link
+        else:
+            failed = (link, DeviceError("no battery report (move/click the mouse and retry)",
+                                        code="no-answer"))
+    if wired:
+        return wired, None, None
+    return failed[0], None, failed[1]
+
+
 def cmd_battery(args):
-    out = []
+    out, read = [], 0
     for m in select_mice(args):
-        for link in links_of(m, args):
-            try:
-                with link.open() as s:
-                    bat = s.battery(args.timeout)
-            except DeviceError as e:
-                print(f"{m.name} [{link.mode}]: {e}", file=sys.stderr)
-                continue
-            if bat is None:
-                if link.mode == "wired":
-                    continue    # externally powered, nothing to report
-                print(f"{m.name} [{link.mode}]: no battery report "
-                      f"(move/click the mouse and retry)", file=sys.stderr)
-                continue
-            out.append({"mouse": m.driver.id, "name": m.name, "link": link.mode,
-                        "percent": bat[0], "state": bat[1]})
-            break
+        link, bat, err = battery_of(m, args)
+        read += bat is not None
+        if args.json:
+            out.append(interface.battery_entry(m, link, bat, err))
+        elif bat:
+            print(f"{m.name} [{link.mode}]: {bat[0]}%  ({bat[1]})")
+        elif err:
+            print(f"{m.name} [{link.mode}]: {err}", file=sys.stderr)
     if args.json:
-        print(json.dumps(out, indent=2))
-    else:
-        for b in out:
-            print(f"{b['name']} [{b['link']}]: {b['percent']}%  ({b['state']})")
-    if not out:
+        emit(interface.document(mice=out))
+    elif not read:
         sys.exit(1)
 
 
@@ -320,7 +368,9 @@ def build_parser():
     common.add_argument("--link", help="only use this connection (wired, dongle)")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    sub.add_parser("list", help="connected mice").set_defaults(fn=cmd_list)
+    ls = sub.add_parser("list", help="connected mice")
+    ls.add_argument("--json", action="store_true")
+    ls.set_defaults(fn=cmd_list)
 
     s = sub.add_parser("status", parents=[common], help="show settings")
     s.add_argument("--json", action="store_true")
@@ -334,9 +384,12 @@ def build_parser():
 
     st = sub.add_parser("set", parents=[common], help="change settings: KEY=VALUE ...")
     st.add_argument("assign", nargs="+", metavar="KEY=VALUE")
+    st.add_argument("--json", action="store_true")
     st.set_defaults(fn=cmd_set)
 
-    sub.add_parser("keys", parents=[common], help="settings each mouse supports").set_defaults(fn=cmd_keys)
+    k = sub.add_parser("keys", parents=[common], help="settings each mouse supports")
+    k.add_argument("--json", action="store_true")
+    k.set_defaults(fn=cmd_keys)
 
     b = sub.add_parser("battery", parents=[common], help="battery level")
     b.add_argument("--json", action="store_true")

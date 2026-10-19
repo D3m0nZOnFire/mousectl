@@ -47,6 +47,9 @@ mousectl tui                           # all mice in one TUI ('m' switches mouse
 mousectl save [FILE] / restore FILE    # raw snapshots
 ```
 
+Every read command and `set` take `--json` for scripts and bar widgets. The
+format is versioned and documented in [docs/INTERFACE.md](docs/INTERFACE.md).
+
 `-m` takes a driver id or alias and can be left out when only one mouse is
 connected. `--link wired|dongle` pins the connection; otherwise the first one
 that answers is used (settings live in the mouse, so either will do).
@@ -71,7 +74,8 @@ Where each protocol comes from and what was checked on real mice:
 
 - Declarative profiles (`mousectl apply prefs.toml`), auto-applied on hotplug
   via a udev-triggered systemd user unit.
-- Waybar battery module on top of `mousectl battery --json`.
+- Bar widgets (Waybar, Quickshell, ...) live in their own repos, on top of
+  the [JSON interface](docs/INTERFACE.md).
 
 ## Credits
 

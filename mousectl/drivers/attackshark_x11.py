@@ -135,7 +135,7 @@ class X11Session(Session):
         try:
             self.fd = os.open(self.link.path, os.O_RDWR | os.O_NONBLOCK)
         except PermissionError:
-            raise DeviceError(f"no permission to open {self.link.path} -- run 'mousectl install-udev'")
+            raise DeviceError(f"no permission to open {self.link.path} -- run 'mousectl install-udev'", code="permission")
         except OSError as e:
             raise DeviceError(f"cannot open {self.link.path}: {e}")
         return self
@@ -195,7 +195,7 @@ class X11Session(Session):
             f"firmware refused read access to report 0x{rid:02x} "
             f"({last_err}) after {retries + 1} tries -- "
             f"this link (wired cable / wireless dongle) may not have a live "
-            f"connection to the mouse right now.")
+            f"connection to the mouse right now.", code="no-answer")
 
     def read(self, units=None):
         return {rid: self.read_config(rid) for rid in (units or X11.units)}
@@ -259,8 +259,7 @@ class X11Session(Session):
             return None
         for ev in self.drain_events(2.5 if timeout is None else timeout):
             if ev[2] in (0x40, 0x41):
-                state = {1: "discharging", 2: "fully charged",
-                         3: "charging/wired"}.get(ev[3], f"0x{ev[3]:02x}")
+                state = {1: "discharging", 2: "full", 3: "charging"}.get(ev[3], "unknown")
                 return ev[4], state
         return None
 

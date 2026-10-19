@@ -75,7 +75,7 @@ class VT3ProSession(Session):
         try:
             self.fd = os.open(self.link.path, os.O_RDWR)
         except PermissionError:
-            raise DeviceError(f"permission denied on {self.link.path} -- run 'mousectl install-udev'")
+            raise DeviceError(f"permission denied on {self.link.path} -- run 'mousectl install-udev'", code="permission")
         except OSError as e:
             raise DeviceError(f"cannot open {self.link.path}: {e}")
         return self
@@ -133,7 +133,7 @@ class VT3ProSession(Session):
             self._last_done = time.time()
             if time.time() >= deadline:
                 break
-        raise DeviceError("no answer from the mouse (asleep? move it and retry)")
+        raise DeviceError("no answer from the mouse (asleep? move it and retry)", code="no-answer")
 
     def _frame(self, cmd, addr, data=b"", length=None):
         f = bytearray(32)
@@ -212,8 +212,8 @@ class VT3ProSession(Session):
     def battery(self, timeout=None):
         resp = self._battery_resp()
         if resp is None:
-            raise DeviceError("no battery answer from the mouse")
-        state = {1: "discharging", 2: "charging"}.get(resp[1], f"0x{resp[1]:02x}")
+            raise DeviceError("no battery answer from the mouse", code="no-answer")
+        state = {1: "discharging", 2: "charging"}.get(resp[1], "unknown")
         return min(resp[2], 100), state
 
 
