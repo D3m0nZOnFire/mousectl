@@ -10,6 +10,8 @@ permissions:
 
 jobs:
   unittest:
+    # Keep the name free of the OS: branch protection requires "unittest (<python>)".
+    name: unittest (${{ matrix.python }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
