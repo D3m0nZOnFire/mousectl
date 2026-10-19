@@ -70,12 +70,22 @@ tests/                  python3 -m unittest
 Where each protocol comes from and what was checked on real mice:
 [docs/PROTOCOLS.md](docs/PROTOCOLS.md). New mouse? See [docs/ADDING_A_DRIVER.md](docs/ADDING_A_DRIVER.md).
 
+## Built on mousectl
+
+Projects that use mousectl's [JSON interface](docs/INTERFACE.md), checked to
+work with the current release:
+
+| project | what it is |
+|---------|------------|
+| [mousectl-omarchy](https://github.com/D3m0nZOnFire/mousectl-omarchy) | Omarchy bar widget: battery of the mouse in use, hover for every connected mouse. `omarchy plugin add https://github.com/D3m0nZOnFire/mousectl-omarchy.git --enable` |
+
+Made something for another bar or desktop? Open an issue with a link and it can
+be listed here.
+
 ## Roadmap
 
 - Declarative profiles (`mousectl apply prefs.toml`), auto-applied on hotplug
   via a udev-triggered systemd user unit.
-- Bar widgets (Waybar, Quickshell, ...) live in their own repos, on top of
-  the [JSON interface](docs/INTERFACE.md).
 
 ## Credits
 
