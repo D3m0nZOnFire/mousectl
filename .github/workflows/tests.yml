@@ -10,11 +10,19 @@ permissions:
 
 jobs:
   unittest:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         python: ["3.9", "3.11", "3.14"]   # 3.9 is the minimum bin/mousectl promises
+        os: [ubuntu-latest]
+        include:
+          # setup-python has no 3.9 build for ubuntu-latest (26.04) any more.
+          - python: "3.9"
+            os: ubuntu-24.04
+        exclude:
+          - python: "3.9"
+            os: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
