@@ -34,7 +34,7 @@ body:
     attributes:
       label: mousectl version
       description: Output of `mousectl --version` (if you run from a checkout, add `git rev-parse --short HEAD`)
-      placeholder: mousectl 0.1.2
+      placeholder: mousectl 0.2.0
     validations:
       required: true
   - type: textarea

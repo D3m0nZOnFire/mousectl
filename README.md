@@ -18,7 +18,7 @@ Supported:
 With [pipx](https://pipx.pypa.io/):
 
 ```bash
-pipx install "git+https://github.com/D3m0nZOnFire/mousectl@v0.1.2"
+pipx install "git+https://github.com/D3m0nZOnFire/mousectl@v0.2.0"
 mousectl install-udev   # only if you get permission errors
 ```
 
