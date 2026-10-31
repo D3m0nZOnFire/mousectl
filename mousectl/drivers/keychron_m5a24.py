@@ -27,8 +27,8 @@ from .pulsar_x3 import (
 )
 
 VENDOR = 0x3434
-WIRED_PIDS = (0xd027, 0xd029)     # 0xd027 = wired, 0xd029 = 8K wired mode (verify with lsusb)
 DONGLE_PID = 0xd028               # wireless dongle (Ultra-Link 8K)
+# Wired PIDs TBD — run `lsusb | grep 3434` with USB cable connected
 CONFIG_INTERFACE = 3
 DESCRIPTOR = b"\x06\xff\xff\x09\x01"  # same as Pulsar X3 (vendor class)
 
@@ -73,9 +73,8 @@ class KeychronM5(Driver):
     id = "keychron-m5a24"
     name = "KeyChron M5 8K"
     aliases = ("m5a24", "m5")
-    links = {**{(VENDOR, pid): "wired" for pid in WIRED_PIDS},
-             (VENDOR, DONGLE_PID): "dongle"}
-    link_order = ("wired", "dongle")
+    links = {(VENDOR, DONGLE_PID): "dongle"}
+    link_order = ("dongle",)
     groups = ["DPI", "Performance", "Timing"]
     units = tuple(UNITS)
     settings = _build_settings()
