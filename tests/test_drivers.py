@@ -8,6 +8,7 @@ from mousectl.core import store
 from mousectl.core.driver import Link, Session
 from mousectl.core.settings import copy_raw, dirty_settings, replay
 from mousectl.drivers import attackshark_x11 as x11
+from mousectl.drivers import keychron_m5a24 as m5
 from mousectl.drivers import pulsar_x3 as px3
 from mousectl.drivers import rapoo_vt3pro as vt3
 
@@ -211,8 +212,48 @@ class VT3Schema(unittest.TestCase):
         self.assertEqual([s.key for s in dirty_settings(d.settings, target, pending, "dongle")], ["ripple"])
 
 
+def m5_raw():
+    return {u: bytearray.fromhex(h) for u, h in GOLDEN["keychron-m5a24"]["raw"].items()}
+
+
 def x3_raw():
     return {u: bytearray.fromhex(h) for u, h in GOLDEN["pulsar-x3"]["raw"].items()}
+
+
+class M5Schema(unittest.TestCase):
+    def test_decode_matches_golden(self):
+        raw, d, g = m5_raw(), m5.DRIVER, GOLDEN["keychron-m5a24"]["decoded"]
+        for i, dpi in enumerate(g["stages"]):
+            self.assertEqual(val(d, raw, f"dpi.stage{i + 1}"), dpi)
+        self.assertEqual(val(d, raw, "dpi.active"), g["active"])
+        for key in ("lod", "polling", "angle_snap", "ripple", "motion_sync", "debounce", "sleep"):
+            self.assertEqual(val(d, raw, key), g[key], key)
+
+    def test_set_then_get(self):
+        raw, d = m5_raw(), m5.DRIVER
+        for key, text, want in (("dpi.stage2", "950", 950), ("dpi.active", "6", 6), ("polling", "500", 500),
+                                ("lod", "0.7", 0.7), ("debounce", "0", 0),
+                                ("sleep", "2", 2), ("sleep", "1.5", 1.5), ("motion_sync", "on", True)):
+            d.setting(key).assign(raw, "dongle", text)
+            self.assertEqual(val(d, raw, key), want, key)
+
+    def test_stage_sets_x_and_y(self):
+        raw, d = m5_raw(), m5.DRIVER
+        d.setting("dpi.stage4").assign(raw, "dongle", "1230")
+        self.assertEqual(raw["dpi"][17:22], bytes([4]) + (1230).to_bytes(2, "little") * 2)
+
+    def test_stages_are_a_list(self):
+        raw, d = m5_raw(), m5.DRIVER
+        with self.assertRaises(ValueError):
+            d.setting("dpi.stage3").assign(raw, "dongle", "off")     # not the last
+        d.setting("dpi.stage6").assign(raw, "dongle", "off")
+        d.setting("dpi.stage5").assign(raw, "dongle", "off")
+        self.assertEqual(raw["dpi"][1], 4)
+        with self.assertRaises(ValueError):
+            d.setting("dpi.active").assign(raw, "dongle", "5")
+        d.setting("dpi.stage6").assign(raw, "dongle", "20000")       # re-enables 5 too
+        self.assertEqual(raw["dpi"][1], 6)
+        self.assertEqual(val(d, raw, "dpi.stage5"), 6400)             # old value kept
 
 
 class X3Schema(unittest.TestCase):
