@@ -1,4 +1,4 @@
-"""Rapoo VT3 PRO (HSDM, dual-mode, PAW3398).
+"""Rapoo VT3 PRO / VT3 PRO Max (HSDM, dual-mode, PAW3398).
 
 Talks the vendor protocol directly over /dev/hidraw*: 32-byte A4 (read) /
 A5 (write) EEPROM frames on vendor report 0xBA, sent as an output report and
@@ -328,7 +328,12 @@ class VT3Pro(Driver):
     id = "rapoo-vt3pro"
     name = "Rapoo VT3 PRO"
     aliases = ("vt3pro",)
-    links = {(VENDOR, 0x4431): "wired", (VENDOR, 0x1231): "dongle"}
+    links = {
+        (VENDOR, 0x4431): "wired",      # VT3 PRO wired
+        (VENDOR, 0x1231): "dongle",     # VT3 PRO dongle
+        (VENDOR, 0x1244): "dongle",     # VT3 PRO Max dongle
+        # TODO: add VT3 PRO Max wired ID when known
+    }
     link_order = ("wired", "dongle")
     groups = ["DPI", "Performance", "Timing"]
     units = tuple(BLOCKS)
