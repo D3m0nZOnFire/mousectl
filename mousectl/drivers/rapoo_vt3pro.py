@@ -331,8 +331,8 @@ class VT3Pro(Driver):
     links = {
         (VENDOR, 0x4431): "wired",      # VT3 PRO wired
         (VENDOR, 0x1231): "dongle",     # VT3 PRO dongle
-        (VENDOR, 0x1244): "dongle",     # VT3 PRO Max dongle
-        # TODO: add VT3 PRO Max wired ID when known
+        (VENDOR, 0x1244): "wired",      # VT3 PRO Max wired
+        # TODO: add VT3 PRO Max dongle ID when known
     }
     link_order = ("wired", "dongle")
     groups = ["DPI", "Performance", "Timing"]
