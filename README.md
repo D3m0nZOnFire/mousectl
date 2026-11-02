@@ -11,7 +11,7 @@ Supported:
 |-------------------|-------------------|------------------------|----------|
 | `attackshark-x11` | Attack Shark X11  | wired `1d57:fa55`, dongle `1d57:fa60` | `ashark` |
 | `keychron-m5a24`  | KeyChron M5 8K    | wired `3434:d048`, dongle `3434:d028` | `m5a24` |
-| `rapoo-vt3pro`    | Rapoo VT3 PRO / VT3 PRO Max | wired `24ae:4431` / `24ae:4444`, dongle `24ae:1231` / `24ae:1244` | `vt3pro` |
+| `rapoo-vt3pro`    | Rapoo VT3 PRO     | wired `24ae:4431`, dongle `24ae:1231` | `vt3pro` |
 | `pulsar-x3`       | Pulsar X3 (PX3R21) | wired `3710:3409` / `3410`, dongle `3710:5402` / `5403` (8K) | `x3` |
 
 ## Install

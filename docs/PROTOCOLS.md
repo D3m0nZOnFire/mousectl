@@ -81,7 +81,10 @@ the sensor really tracks at the new DPI).
 - **Source:** the Keychron Launcher web app (launcher.keychron.com, WebHID).
   The command layouts were read from its JavaScript bundle and the
   polling/LOD tables from its product JSON for `3434:d048`. No code was
-  copied. Every layout below was then confirmed on the mouse.
+  copied. Every command layout below was then confirmed on the mouse.
+  The one exception is the 20K FPS byte of command `0x42`, which this
+  firmware doesn't support: it is always written back with the value the
+  mouse reports, in the Launcher's encoding (1 = off, 2 = on).
 - **Checked on my mouse (firmware 1.0.2), on the cable `3434:d048` and the
   dongle `3434:d028` (firmware 0.1.4):** every setting:
   - all 5 DPI stages, stage count, active stage
@@ -99,7 +102,17 @@ the sensor really tracks at the new DPI).
     `mousectl` skips that link with "no answer".
 - **Not supported:** profiles, per-button debounce, button remapping and
   20K FPS mode (the Launcher only offers profiles and 20K FPS from mouse
-  firmware 1.0.4).
+  firmware 1.0.4, which is untested; the driver reads and writes the
+  active profile only).
+- **Known limitation:** `3434:d028` is Keychron's generic Ultra-Link 8K
+  receiver. The driver assumes the mouse paired to it is an M5 8K and
+  doesn't check which mouse it is.
+- **Write safety:** before writing anything, every changed block is
+  checked (stage count, DPI range, known polling/LOD values, debounce
+  and sleep ranges). One bad field refuses the whole write, whether it
+  comes from `set`, the TUI or `restore`. A value the mouse already
+  holds passes, so an unexpected value from newer firmware doesn't block
+  unrelated edits.
 
 ## Checking a mouse yourself
 
