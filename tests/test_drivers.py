@@ -1,11 +1,13 @@
 import json
 import os
+import socket
 import tempfile
+import threading
 import unittest
 
 from mousectl import cli
 from mousectl.core import store
-from mousectl.core.driver import Link, Session
+from mousectl.core.driver import DeviceError, Link, Session
 from mousectl.core.settings import copy_raw, dirty_settings, replay
 from mousectl.drivers import attackshark_x11 as x11
 from mousectl.drivers import keychron_m5a24 as m5
@@ -297,6 +299,35 @@ class M5Schema(unittest.TestCase):
         self.assertTrue(m5._same("dpi", a, b))
         a[1] ^= 1
         self.assertFalse(m5._same("dpi", a, b))
+        a[1] ^= 1
+        a[11] = 5
+        self.assertFalse(m5._same("dpi", a, b))
+
+    def test_two_stages_off_in_one_apply(self):
+        for d, raw in ((m5.DRIVER, m5_raw()), (px3.DRIVER, x3_raw())):
+            with self.subTest(driver=d.id):
+                pending = copy_raw(raw)
+                n = sum(d.setting(f"dpi.stage{i}").enabled(raw, "dongle") for i in range(1, 7)
+                        if any(s.key == f"dpi.stage{i}" for s in d.settings))
+                for i in (n, n - 1):
+                    d.setting(f"dpi.stage{i}").assign(pending, "dongle", "off")
+                target = replay(d.settings, raw, pending, "dongle", ["DPI"])
+                self.assertFalse(d.setting(f"dpi.stage{n - 1}").enabled(target, "dongle"))
+                self.assertTrue(d.setting(f"dpi.stage{n - 2}").enabled(target, "dongle"))
+
+    def test_stage_swap_on_a_bitmask_in_one_apply(self):
+        # X11 stages are a bitmask: with only stage 2 on, "enable 1, disable 2"
+        # must enable first or the mask would empty on the way.
+        d, raw = x11.DRIVER, x11_raw()
+        for i in range(x11.STAGES, 0, -1):
+            if i != 2 and d.setting(f"dpi.stage{i}").enabled(raw, "dongle"):
+                d.setting(f"dpi.stage{i}").assign(raw, "dongle", "off")
+        pending = copy_raw(raw)
+        d.setting("dpi.stage1").assign(pending, "dongle", "800")
+        d.setting("dpi.stage2").assign(pending, "dongle", "off")
+        target = replay(d.settings, raw, pending, "dongle", ["DPI"])
+        self.assertTrue(d.setting("dpi.stage1").enabled(target, "dongle"))
+        self.assertFalse(d.setting("dpi.stage2").enabled(target, "dongle"))
 
     def test_two_stages_off_in_one_apply(self):
         for d, raw in ((m5.DRIVER, m5_raw()), (px3.DRIVER, x3_raw())):
@@ -330,6 +361,237 @@ class M5Schema(unittest.TestCase):
         self.assertTrue(m5.DRIVER.is_config_interface(Node()))
         Node.descriptor = bytes.fromhex("058c0901a10185b10902c0")
         self.assertFalse(m5.DRIVER.is_config_interface(Node()))
+
+
+class FakeM5Mouse:
+    """The M5 on the other end of a SOCK_SEQPACKET pair: real select/read
+    on the session side, one datagram per HID report, firmware behaviour
+    as observed on the real mouse (slot mirroring, stage-slot refill)."""
+
+    def __init__(self, mode="dongle", ignore=0, status=0, apply=True, noise=False, mute=False, timeout=0.5):
+        self.timeout = timeout
+        self.cfg = bytearray(m5_cfg())
+        self.slot = m5.SLOT[mode]
+        self.ignore, self.status, self.apply, self.noise, self.mute = ignore, status, apply, noise, mute
+        self.commands = []
+        self.host, self.dev = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+        self.thread = threading.Thread(target=self.run, daemon=True)
+        self.thread.start()
+
+    def session(self):
+        s = m5.M5Session(Link(m5.DRIVER, "/dev/fake", "wired" if self.slot == 0 else "dongle"))
+        s.fd = self.host.fileno()
+        s.TIMEOUT_S = self.timeout
+        return s
+
+    def close(self):
+        self.host.close()
+        self.thread.join(1)
+        self.dev.close()
+
+    def reply(self, rid, data):
+        n = m5.LONG_LEN if rid == m5.REPLY_LONG else m5.SHORT_LEN
+        self.dev.send(bytes([rid]) + bytes(data) + bytes(n - len(data)))
+
+    def run(self):
+        while True:
+            try:
+                r = self.dev.recv(256)
+            except OSError:
+                return
+            if not r:
+                return
+            rid, p = r[0], r[1:]
+            self.commands.append(bytes(p[:1]))
+            if self.mute:
+                continue
+            if self.ignore:
+                self.ignore -= 1
+                continue
+            if self.noise:
+                # Each of these is caught by exactly one guard: a foreign
+                # ack (command byte), a config answer on the short report
+                # (report ID), a truncated config answer (length), and an
+                # ack for this very command on the long report (report ID).
+                self.reply(m5.REPLY_SHORT, [m5.ACK, 0, 0x99])
+                self.reply(m5.REPLY_SHORT, self.cfg[:m5.SHORT_LEN])
+                self.dev.send(bytes([m5.REPLY_LONG]) + bytes(self.cfg[:40]))
+                if rid == m5.REPORT_SHORT:
+                    self.reply(m5.REPLY_LONG, [m5.ACK, 7, p[0]])
+            if rid == m5.REPORT_LONG and p[0] == m5.CMD_CONFIG:
+                self.reply(m5.REPLY_LONG, self.cfg)
+                continue
+            if self.apply and not self.status:
+                self.execute(p)
+            self.reply(m5.REPLY_SHORT, [m5.ACK, self.status, p[0]])
+
+    def execute(self, p):
+        c, cmd = self.cfg, p[0]
+        if cmd == m5.CMD_DPI:
+            a = p[1 + self.slot]
+            for i in range(3):
+                c[2 + i] = (c[2 + i] & 0xF0) | a
+            c[5:15], c[16] = p[4:14], p[14]
+            for i in range(p[14], 5):           # the mouse refills unused slots
+                c[5 + 2 * i:7 + 2 * i] = c[3 + 2 * p[14]:5 + 2 * p[14]]
+        elif cmd == m5.CMD_POLLING:
+            lv = p[1 + self.slot]
+            for i in range(2):
+                c[2 + i] = (c[2 + i] & 0x0F) | lv << 4
+        elif cmd == m5.CMD_SENSOR:
+            f = c[15]
+            if p[1]:
+                f = (f & ~3) | p[1]
+            for bit, v in ((2, p[2]), (3, p[3]), (4, p[4])):
+                if v:
+                    f = f | 1 << bit if v == 1 else f & ~(1 << bit)
+            f = (f & ~0x40) | (p[6] - 1) << 6
+            c[15], c[52] = f, p[8] - 1
+        elif cmd == m5.CMD_DEBOUNCE:
+            c[17] = p[1]
+        elif cmd == m5.CMD_SLEEP and p[1] == 1:
+            c[18] = p[2]
+
+
+class M5Transport(unittest.TestCase):
+    def mouse(self, **kw):
+        m = FakeM5Mouse(**kw)
+        self.addCleanup(m.close)
+        return m
+
+    def test_read_and_write_every_setting(self):
+        for mode in ("wired", "dongle"):
+            with self.subTest(mode=mode):
+                mouse = self.mouse(mode=mode)
+                s, d = mouse.session(), m5.DRIVER
+                before = s.read()
+                self.assertEqual(before, m5_raw(mode))
+                after = copy_raw(before)
+                for key, text in (("dpi.stage2", "1250"), ("dpi.active", "3"), ("polling", "1000"),
+                                  ("lod", "0.7"), ("angle_snap", "on"), ("scroll_reverse", "on"),
+                                  ("debounce", "8"), ("sleep", "17"), ("dpi.stage5", "off")):
+                    d.setting(key).assign(after, mode, text)
+                self.assertEqual(s.write(before, after), list(m5.UNITS))
+                back = s.read()
+                for key, want in (("dpi.stage2", 1250), ("dpi.active", 3), ("polling", 1000), ("lod", 0.7),
+                                  ("angle_snap", True), ("scroll_reverse", True), ("debounce", 8), ("sleep", 17)):
+                    self.assertEqual(d.setting(key).get(back, mode), want, key)
+                self.assertFalse(d.setting("dpi.stage5").enabled(back, mode))
+
+    def test_ignores_foreign_and_short_reports(self):
+        s = self.mouse(noise=True).session()
+        before = s.read()
+        self.assertEqual(before, m5_raw())
+        self.assertEqual(s.battery(), (93, "discharging"))
+        after = copy_raw(before)
+        m5.DRIVER.setting("sleep").assign(after, "dongle", "20")
+        self.assertEqual(s.write(before, after), ["sleep"])   # the status-7 decoy was skipped
+        self.assertEqual(m5.DRIVER.setting("sleep").get(s.read(), "dongle"), 20)
+
+    def test_resends_when_a_reply_is_lost(self):
+        mouse = self.mouse(ignore=2)
+        self.assertEqual(mouse.session().read(), m5_raw())
+        self.assertEqual(len(mouse.commands), 3)
+
+    def test_no_answer(self):
+        with self.assertRaises(DeviceError) as cm:
+            self.mouse(mute=True, timeout=0.05).session().read()
+        self.assertEqual(cm.exception.code, "no-answer")
+
+    def test_refused_command(self):
+        s = self.mouse(status=7).session()
+        before = s.read()
+        after = copy_raw(before)
+        m5.DRIVER.setting("sleep").assign(after, "dongle", "20")
+        with self.assertRaisesRegex(DeviceError, "refused"):
+            s.write(before, after)
+
+    def test_verify_failure_after_three_tries(self):
+        mouse = self.mouse(apply=False)
+        s = mouse.session()
+        before = s.read()
+        after = copy_raw(before)
+        m5.DRIVER.setting("debounce").assign(after, "dongle", "9")
+        with self.assertRaisesRegex(DeviceError, "verify failed"):
+            s.write(before, after)
+        self.assertEqual(mouse.commands.count(bytes([m5.CMD_DEBOUNCE])), 3)
+
+    def test_bad_snapshot_is_refused_before_any_write(self):
+        bad = {"dpi": bytearray(b"\x00"), "polling": bytearray(b"\x0f"), "sleep": bytearray(b"\x00"),
+               "debounce": bytearray(b"\xff"), "sensor": bytearray(8)}
+        for unit, data in bad.items():
+            with self.subTest(unit=unit):
+                mouse = self.mouse()
+                s = mouse.session()
+                before = s.read()
+                after = copy_raw(before)
+                # valid changes in units written before and after the bad one
+                m5.DRIVER.setting("dpi.stage1").assign(after, "dongle", "500")
+                m5.DRIVER.setting("sleep").assign(after, "dongle", "30")
+                after[unit] = data
+                with self.assertRaisesRegex(DeviceError, "refusing"):
+                    s.write(before, after)
+                self.assertEqual(mouse.commands, [bytes([m5.CMD_CONFIG])])
+
+    def test_check_unit_rules(self):
+        raw = m5_raw()
+
+        def dpi(**kw):
+            b = bytearray(raw["dpi"])
+            if "stage1" in kw:
+                b[1:3] = kw["stage1"].to_bytes(2, "little")
+            if "count" in kw:
+                b[11] = kw["count"]
+            if "active" in kw:
+                b[0] = kw["active"]
+            return b
+
+        def sensor(pos, v):
+            b = bytearray(raw["sensor"])
+            b[pos] = v
+            return b
+
+        ok = [("dpi", dpi(stage1=50)), ("dpi", dpi(stage1=30000)), ("dpi", dpi(count=1)),
+              ("dpi", dpi(count=5, active=4)), ("polling", b"\x05"), ("debounce", b"\x00"),
+              ("debounce", b"\x14"), ("sleep", b"\x01"), ("sleep", b"\xf0"), ("sensor", sensor(m5.S_LOD, 3)),
+              ("sensor", sensor(m5.S_FPS, 2))]
+        refused = [("dpi", dpi(stage1=49)), ("dpi", dpi(stage1=30050)), ("dpi", dpi(count=0)),
+                   ("dpi", dpi(count=6)), ("dpi", dpi(count=2, active=2)), ("dpi", raw["dpi"][:11]),
+                   ("polling", b"\x06"), ("debounce", b"\x15"), ("sleep", b"\x00"), ("sleep", b"\xf1"),
+                   ("sensor", sensor(m5.S_LOD, 0)), ("sensor", sensor(m5.S_RIPPLE, 0)),
+                   ("sensor", sensor(m5.S_MOTION, 3)), ("sensor", sensor(4, 1)), ("sensor", sensor(6, 1))]
+        for unit, data in ok:
+            with self.subTest(unit=unit, data=bytes(data).hex()):
+                m5.check_unit(unit, bytearray(data), raw[unit])
+        for unit, data in refused:
+            with self.subTest(unit=unit, data=bytes(data).hex()):
+                with self.assertRaises(DeviceError):
+                    m5.check_unit(unit, bytearray(data), raw[unit])
+
+    def test_values_the_mouse_already_holds_pass(self):
+        # e.g. a LOD index newer firmware reports: other sensor edits still go
+        held = bytearray(m5_raw()["sensor"])
+        held[m5.S_LOD] = 0
+        edited = bytearray(held)
+        edited[m5.S_MOTION] = 2
+        m5.check_unit("sensor", edited, held)
+        with self.assertRaises(DeviceError):
+            m5.check_unit("sensor", edited, m5_raw()["sensor"])
+        with self.assertRaises(DeviceError):
+            m5.check_unit("sensor", edited)
+
+    def test_odd_config_is_refused(self):
+        cfg = bytearray(m5_cfg())
+        cfg[16] = 0
+        with self.assertRaises(DeviceError):
+            m5.decode_config(cfg, "dongle")
+        with self.assertRaises(DeviceError):
+            m5.decode_config(m5_cfg()[:20], "dongle")
+
+    def test_battery_charging_bit(self):
+        mouse = self.mouse()
+        mouse.cfg[19] = 0x80 | 93
+        self.assertEqual(mouse.session().battery(), (93, "charging"))
 
 
 class X3Schema(unittest.TestCase):

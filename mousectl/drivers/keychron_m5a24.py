@@ -57,12 +57,17 @@ LOD_MM = {3: 0.7, 1: 1, 2: 2}
 LOD_INDEX = {v: k for k, v in LOD_MM.items()}
 
 # Sensor unit = command 0x42 payload: [lod, ripple, angle, motion, 0,
-# scroll, 0, fps20k]; switches are 1 = on / 2 = off (0 = leave as is),
-# scroll is 1 = normal / 2 = reversed.
+# scroll, 0, fps20k]. Ripple, angle and motion are 1 = on / 2 = off
+# (0 = leave as is); scroll and fps20k are the Launcher's "value + 1":
+# scroll 1 = normal / 2 = reversed, fps20k 1 = off / 2 = on.
 S_LOD, S_RIPPLE, S_ANGLE, S_MOTION, S_SCROLL, S_FPS = 0, 1, 2, 3, 5, 7
 SENSOR_LEN = 8
 
 UNITS = ("dpi", "polling", "sensor", "debounce", "sleep")
+UNIT_LEN = {"dpi": 12, "polling": 1, "sensor": SENSOR_LEN, "debounce": 1, "sleep": 1}
+DPI_RANGE = (50, 30000)
+DEBOUNCE_MAX = 20
+SLEEP_RANGE = (1, 240)
 
 
 def _flag(on):
@@ -71,6 +76,8 @@ def _flag(on):
 
 def decode_config(cfg, mode):
     """Split a command 0x06 answer (device bytes, cfg[0] == 6) into units."""
+    if len(cfg) < LONG_LEN or cfg[0] != CMD_CONFIG or not 1 <= cfg[16] <= STAGES:
+        raise DeviceError(f"odd config answer {bytes(cfg).hex()}")
     slot = cfg[2 + SLOT.get(mode, 1)]
     f = cfg[15]
     sensor = bytearray(SENSOR_LEN)
@@ -87,6 +94,44 @@ def decode_config(cfg, mode):
         "debounce": bytearray([cfg[17]]),
         "sleep": bytearray([cfg[18]]),
     }
+
+
+def _fields(unit, data):
+    """(label, value, valid) for every field of a unit."""
+    if unit == "dpi":
+        count = data[11]
+        f = [("stage count", count, 1 <= count <= STAGES),
+             ("active stage", data[0], data[0] < count)]
+        for i in range(min(count, STAGES)):
+            v = int.from_bytes(data[1 + 2 * i:3 + 2 * i], "little")
+            f.append((f"stage {i + 1} DPI", v, DPI_RANGE[0] <= v <= DPI_RANGE[1]))
+        return f
+    if unit == "polling":
+        return [("polling level", data[0], data[0] < len(POLL_RATES))]
+    if unit == "sensor":
+        return ([("LOD", data[S_LOD], data[S_LOD] in LOD_MM),
+                 ("reserved byte 4", data[4], data[4] == 0),
+                 ("reserved byte 6", data[6], data[6] == 0)]
+                + [(f"switch byte {p}", data[p], data[p] in (1, 2))
+                   for p in (S_RIPPLE, S_ANGLE, S_MOTION, S_SCROLL, S_FPS)])
+    if unit == "debounce":
+        return [("debounce", data[0], data[0] <= DEBOUNCE_MAX)]
+    return [("sleep", data[0], SLEEP_RANGE[0] <= data[0] <= SLEEP_RANGE[1])]
+
+
+def check_unit(unit, data, before=None):
+    """Refuse bytes the mouse must never get, e.g. from a hand-edited or
+    foreign snapshot passed to `restore`. A value the mouse already holds
+    (`before`) passes even if it is outside the known range, so an odd
+    value reported by newer firmware doesn't block unrelated edits."""
+    if len(data) != UNIT_LEN[unit]:
+        raise DeviceError(f"refusing to write {unit} {bytes(data).hex()}: expected {UNIT_LEN[unit]} bytes")
+    held = {}
+    if before is not None and len(before) == UNIT_LEN[unit]:
+        held = {label: v for label, v, _ in _fields(unit, before)}
+    for label, v, ok in _fields(unit, data):
+        if not ok and held.get(label) != v:
+            raise DeviceError(f"refusing to write {unit} {bytes(data).hex()}: {label} {v} is out of range")
 
 
 def encode_unit(unit, data):
@@ -149,8 +194,10 @@ class M5Session(Session):
         except OSError as e:
             raise DeviceError(f"write failed: {e}")
 
-    def _wait(self, match):
-        """First input report (without report ID) that `match` accepts."""
+    def _wait(self, reply, match):
+        """First full-length `reply` input report (without its report ID)
+        that `match` accepts."""
+        n = LONG_LEN if reply == REPLY_LONG else SHORT_LEN
         deadline = time.monotonic() + self.TIMEOUT_S
         while True:
             left = deadline - time.monotonic()
@@ -162,25 +209,26 @@ class M5Session(Session):
                 r = os.read(self.fd, 256)
             except OSError as e:
                 raise DeviceError(f"read failed: {e}")
-            if r and r[0] in (REPLY_LONG, REPLY_SHORT) and match(r[1:]):
+            if len(r) > n and r[0] == reply and match(r[1:]):
                 return r[1:]
 
-    def transact(self, report, payload, match):
+    def transact(self, report, payload, reply, match):
         for _ in range(self.TRIES):
             self._drain()
             self._send(report, payload)
-            r = self._wait(match)
+            r = self._wait(reply, match)
             if r is not None:
                 return r
         raise DeviceError(f"no answer to command 0x{payload[0]:02x} "
                           f"(mouse asleep or out of range? move it and retry)", code="no-answer")
 
     def config(self):
-        return self.transact(REPORT_LONG, bytes([CMD_CONFIG]), lambda r: r[0] == CMD_CONFIG)
+        return self.transact(REPORT_LONG, bytes([CMD_CONFIG]), REPLY_LONG, lambda r: r[0] == CMD_CONFIG)
 
     def command(self, report, payload):
         cmd = payload[0]
-        r = self.transact(report, payload, lambda r: r[0] == ACK and r[2] == cmd)
+        reply = REPLY_LONG if report == REPORT_LONG else REPLY_SHORT
+        r = self.transact(report, payload, reply, lambda r: r[0] == ACK and r[2] == cmd)
         if r[1] != 0:
             raise DeviceError(f"mouse refused command 0x{cmd:02x} (status {r[1]})")
 
@@ -191,10 +239,12 @@ class M5Session(Session):
         return {u: all_units[u] for u in (units or UNITS)}
 
     def write(self, before, after):
+        changed = [u for u in UNITS
+                   if u in after and bytes(before.get(u, b"")) != bytes(after[u])]
+        for u in changed:               # all or nothing: check before any write
+            check_unit(u, after[u], before.get(u))
         written = []
-        for u in UNITS:
-            if u not in after or bytes(before.get(u, b"")) == bytes(after[u]):
-                continue
+        for u in changed:
             for attempt in range(3):
                 self.command(*encode_unit(u, after[u]))
                 back = self.read([u])[u]
@@ -306,7 +356,7 @@ def _byte(unit):
 
 
 def _build_settings():
-    dpi = Number(50, 30000, 50, unit=" DPI")
+    dpi = Number(*DPI_RANGE, 50, unit=" DPI")
     s = [Setting(f"dpi.stage{i + 1}", f"Stage {i + 1}", "DPI", dpi, ("dpi",),
                  _stage_get(i), _stage_set(i),
                  get_enabled=_stage_enabled(i), set_enabled=_stage_set_enabled(i),
@@ -326,9 +376,9 @@ def _build_settings():
                 _lod_get, _lod_set),
         Setting("scroll_reverse", "Reverse scroll", "Performance", Bool(), ("sensor",),
                 *_switch(S_SCROLL, on_value=2)),
-        Setting("debounce", "Debounce", "Timing", Number(0, 20, unit=" ms"), ("debounce",),
+        Setting("debounce", "Debounce", "Timing", Number(0, DEBOUNCE_MAX, unit=" ms"), ("debounce",),
                 *_byte("debounce")),
-        Setting("sleep", "Idle sleep", "Timing", Number(1, 240, unit=" min"), ("sleep",),
+        Setting("sleep", "Idle sleep", "Timing", Number(*SLEEP_RANGE, unit=" min"), ("sleep",),
                 *_byte("sleep")),
     ]
     return s

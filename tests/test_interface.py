@@ -15,6 +15,7 @@ from mousectl.core import store
 from mousectl.core.driver import DeviceError, Link, Mouse
 from mousectl.drivers import DRIVERS
 from mousectl.drivers import attackshark_x11 as x11
+from mousectl.drivers import keychron_m5a24 as m5
 from mousectl.drivers import pulsar_x3 as px3
 from mousectl.drivers import rapoo_vt3pro as vt3
 from tests.test_driver_contract import fixture_path
@@ -301,7 +302,8 @@ class DeviceErrors(unittest.TestCase):
     def test_drivers_flag_permission_denied(self):
         sessions = [x11.X11Session(Link(X11, "/dev/null", "dongle", {"lengths": {}})),
                     vt3.VT3ProSession(Link(vt3.DRIVER, "/dev/null", "dongle")),
-                    px3.X3Session(Link(px3.DRIVER, "/dev/null", "dongle"))]
+                    px3.X3Session(Link(px3.DRIVER, "/dev/null", "dongle")),
+                    m5.M5Session(Link(m5.DRIVER, "/dev/null", "dongle"))]
         for s in sessions:
             with self.subTest(driver=s.link.driver.id), \
                     mock.patch("os.open", side_effect=PermissionError(13, "denied")), \
@@ -327,6 +329,14 @@ class BatteryStates(unittest.TestCase):
                 s = vt3.VT3ProSession(Link(vt3.DRIVER, "/dev/null", "dongle"))
                 s._battery_resp = lambda: bytes([0, byte, 64])
                 self.assertEqual(s.battery(), (64, state))
+
+
+    def test_m5_states(self):
+        for byte, state in ((0x5D, "discharging"), (0xDD, "charging")):
+            with self.subTest(byte=byte):
+                s = m5.M5Session(Link(m5.DRIVER, "/dev/null", "dongle"))
+                s.config = lambda: bytes(19) + bytes([byte])
+                self.assertEqual(s.battery(), (93, state))
 
 
 class Documented(unittest.TestCase):
