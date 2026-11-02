@@ -94,6 +94,8 @@ be listed here.
 - Pulsar X3 protocol: [wertyg775/pulsar-x3-software](https://github.com/wertyg775/pulsar-x3-software),
   [jonkristian/pulsar-x3-python](https://github.com/jonkristian/pulsar-x3-python) (MIT) and
   [packerlschupfer/pulsar-mouse-linux](https://github.com/packerlschupfer/pulsar-mouse-linux) (MIT)
+- KeyChron M5 8K protocol: read from Keychron's own [Launcher](https://launcher.keychron.com) web app
+  and confirmed on the mouse (see [docs/PROTOCOLS.md](docs/PROTOCOLS.md))
 - Rapoo protocol research: [pedro3z0/rapoo-software-linux](https://github.com/pedro3z0/rapoo-software-linux) (MIT)
 
 ## License
