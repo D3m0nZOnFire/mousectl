@@ -2,14 +2,16 @@ import json
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 from mousectl import cli
 from mousectl.core import store
-from mousectl.core.driver import Link, Session
+from mousectl.core.driver import DeviceError, Link, Session
 from mousectl.core.settings import copy_raw, dirty_settings, replay
 from mousectl.drivers import attackshark_x11 as x11
 from mousectl.drivers import pulsar_x3 as px3
 from mousectl.drivers import rapoo_vt3pro as vt3
+from mousectl.drivers import rapoo_vt3pro_max as vt3max
 
 GOLDEN = json.load(open(os.path.join(os.path.dirname(__file__), "fixtures", "golden.json")))
 
@@ -213,6 +215,352 @@ class VT3Schema(unittest.TestCase):
 
 def x3_raw():
     return {u: bytearray.fromhex(h) for u, h in GOLDEN["pulsar-x3"]["raw"].items()}
+
+
+def vt3max_raw():
+    path = os.path.join(os.path.dirname(__file__), "fixtures", "rapoo-vt3pro-max.json")
+    with open(path) as f:
+        return {int(a, 16): bytearray.fromhex(h) for a, h in json.load(f)["blocks"].items()}
+
+
+class VT3MaxSchema(unittest.TestCase):
+    def test_decodes_the_factory_defaults(self):
+        raw, d = vt3max_raw(), vt3max.DRIVER
+        self.assertEqual([d.setting(f"dpi.stage{i}").get(raw, "dongle") for i in range(1, 8)],
+                         [400, 800, 1200, 1600, 3200, 6400, 30000])
+
+    def test_max_limits(self):
+        raw, d = vt3max_raw(), vt3max.DRIVER
+        d.setting("dpi.stage7").assign(raw, "dongle", "30000")     # its own current value
+        d.setting("dpi.stage1").assign(raw, "dongle", "410")
+        self.assertEqual(raw[vt3.ADDR_DPI_X][0:2], (410).to_bytes(2, "little"))
+        for bad in ("405", "30010"):
+            with self.assertRaises(ValueError):
+                d.setting("dpi.stage1").assign(raw, "dongle", bad)
+
+    def test_8000_hz_on_the_cable_only(self):
+        d = vt3max.DRIVER
+        raw = vt3max_raw()
+        d.setting("polling").assign(raw, "wired", "8000")
+        self.assertEqual(raw[vt3.ADDR_PERF][2], 0x81)
+        with self.assertRaisesRegex(ValueError, "only accepted over the cable"):
+            d.setting("polling").assign(vt3max_raw(), "dongle", "8000")
+        d.setting("polling").assign(raw, "dongle", "4000")
+        self.assertEqual(raw[vt3.ADDR_PERF][0], 0x82)
+
+    def test_hardware_check_skips_values_the_link_refuses(self):
+        from tests.hardware_check import other_value
+        raw = vt3max_raw()                                  # 4000 Hz on the receiver
+        self.assertEqual(other_value(vt3max.DRIVER.setting("polling"), raw, "dongle"), 2000)
+        raw[vt3.ADDR_PERF][2] = 0x82                        # 4000 Hz on the cable
+        self.assertEqual(other_value(vt3max.DRIVER.setting("polling"), raw, "wired"), 8000)
+
+    def test_vt3pro_limits_unchanged(self):
+        raw, d = vt3_raw(), vt3.DRIVER
+        for bad, mode in (("26050", "dongle"), ("410", "dongle")):
+            with self.assertRaises(ValueError):
+                d.setting("dpi.stage1").assign(raw, mode, bad)
+        with self.assertRaises(ValueError):
+            d.setting("polling").assign(raw, "wired", "8000")
+
+    def test_models_dont_share_ids_or_snapshots(self):
+        self.assertFalse(set(vt3.DRIVER.links) & set(vt3max.DRIVER.links))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "pro.json")
+            store.write_snapshot(path, vt3.DRIVER, "dongle", vt3_raw())
+            with self.assertRaises(ValueError):
+                store.load_snapshot(path, vt3max.DRIVER)
+
+
+class FakeVT3:
+    """A VT3 PRO / Max EEPROM behind report 0xBA. `fast` answers at once
+    (the Max's cable: busy is never visible); otherwise busy first, then
+    the answer two polls later. Answers come strictly in order: a frame
+    that arrives while an earlier answer is pending is answered after it.
+    `drop(frame)` loses chosen frames."""
+
+    def __init__(self, blocks, fast=True, drop=lambda frame: False, battery=(2, 87)):
+        self.mem = {}
+        for addr, data in blocks.items():
+            for i, b in enumerate(data):
+                self.mem[addr + i] = b
+        self.fast, self.drop, self.battery = fast, drop, battery
+        self.report, self.later, self.polls = bytes(32), None, 0
+        self.queue, self.next = [], False
+        self.frames = []
+
+    def attach(self, session):
+        session.fd, session.GAP_S, session.ACCEPT_S, session.SETTLE_S, session.QUIET_S = -1, 0, 0.01, 0.05, 0.01
+        session._get_input = self.get_input
+        patch = mock.patch("os.write", side_effect=lambda fd, data: self.receive(bytes(data[1:])))
+        patch.start()
+        return patch
+
+    def block(self, addr, n):
+        return bytes(self.mem[addr + i] for i in range(n))
+
+    def answer(self, f):
+        cmd, n, addr = f[1], f[2], int.from_bytes(f[3:7], "little")
+        if cmd == vt3.CMD_READ:
+            return (bytes([vt3.ACK_OK, 0, 0, 0]) + self.block(addr, n)).ljust(32, b"\0")
+        if cmd == vt3.CMD_WRITE:
+            for i in range(n):
+                self.mem[addr + i] = f[7 + i]
+            return bytes([vt3.ACK_OK]).ljust(32, b"\0")
+        return bytes([vt3.ACK_OK, *self.battery]).ljust(32, b"\0")
+
+    def receive(self, f):
+        self.frames.append(f)
+        if self.drop(f):
+            return
+        if self.later is not None or self.next:
+            self.queue.append((self.answer(f), 1))
+        elif self.fast:
+            self.report = self.answer(f)
+        else:
+            self.report, self.later, self.polls = bytes([vt3.ACK_BUSY]).ljust(32, b"\0"), self.answer(f), 2
+
+    def get_input(self):
+        # a delivered answer shows for one poll, then the next queued
+        # exchange is busy for its own number of polls
+        if self.next:
+            self.next = False
+            self.report = bytes([vt3.ACK_BUSY]).ljust(32, b"\0")
+            self.later, self.polls = self.queue.pop(0)
+        elif self.later is not None:
+            self.polls -= 1
+            if self.polls <= 0:
+                self.report, self.later = self.later, None
+                self.next = bool(self.queue)
+        return self.report
+
+
+class VT3Transport(unittest.TestCase):
+    def max_session(self, **kw):
+        dev = FakeVT3(vt3max_raw(), **kw)
+        s = vt3max.VT3ProMaxSession(Link(vt3max.DRIVER, "/dev/null", "wired"))
+        self.addCleanup(dev.attach(s).stop)
+        return s, dev
+
+    def test_fast_answers_read_and_write(self):
+        s, dev = self.max_session()
+        self.assertEqual(s.read(), vt3max_raw())        # DPI X and Y blocks are identical
+        self.assertEqual(s.battery(), (87, "charging"))
+        before = s.read()
+        after = copy_raw(before)
+        vt3max.DRIVER.setting("dpi.stage1").assign(after, "wired", "450")
+        self.assertEqual(s.write(before, after), [vt3.ADDR_DPI_X, vt3.ADDR_DPI_Y])
+        self.assertEqual(s.read(), after)
+
+    def test_slow_answers_too(self):
+        s, dev = self.max_session(fast=False)
+        self.assertEqual(s.read(), vt3max_raw())
+
+    def test_dropped_y_write_is_not_a_success(self):
+        # the reviewer's case: X changes, every later Y frame (and marker) is lost
+        dpi_y = vt3.ADDR_DPI_Y.to_bytes(4, "little")
+        s, dev = self.max_session()
+        before = s.read()
+        dev.drop = lambda f: f[1] == vt3.CMD_WRITE and f[3:7] == dpi_y
+        after = copy_raw(before)
+        vt3max.DRIVER.setting("dpi.stage1").assign(after, "wired", "450")
+        with self.assertRaises(DeviceError):
+            s.write(before, after)
+        self.assertEqual(before[vt3.ADDR_DPI_Y], vt3max_raw()[vt3.ADDR_DPI_Y])   # not marked written
+        self.assertEqual(dev.block(vt3.ADDR_DPI_Y, 16), bytes(vt3max_raw()[vt3.ADDR_DPI_Y]))
+
+    def test_frozen_link_is_no_answer_not_old_data(self):
+        s, dev = self.max_session()
+        s.read()
+        dev.drop = lambda f: True
+        for call in (lambda: s.read_block(vt3.ADDR_DPI_Y), s.battery):
+            with self.subTest(call=call):
+                with self.assertRaises(DeviceError) as cm:
+                    call()
+                self.assertEqual(cm.exception.code, "no-answer")
+
+    def test_identical_answers_back_to_back(self):
+        # DPI Y straight after the identical DPI X, and two battery reads:
+        # the answer equals what the report already holds
+        s, dev = self.max_session()
+        self.assertEqual(s.read_block(vt3.ADDR_DPI_X), s.read_block(vt3.ADDR_DPI_Y))
+        self.assertEqual(s.battery(), s.battery())
+
+    def test_late_answer_to_an_earlier_command(self):
+        # the reviewer's case: still busy with a SENSOR read when PERF is
+        # asked for, the PERF frame is lost, then the SENSOR answer lands
+        perf = vt3.ADDR_PERF.to_bytes(4, "little")
+        s, dev = self.max_session()
+        sensor = dev.answer(s._frame(vt3.CMD_READ, vt3.ADDR_SENSOR, length=4))
+        dev.report, dev.later, dev.polls = bytes([vt3.ACK_BUSY]).ljust(32, b"\0"), sensor, 3
+        lost = []
+
+        def drop_first_perf(f):
+            if f[1] == vt3.CMD_READ and f[3:7] == perf and not lost:
+                lost.append(f)
+                return True
+            return False
+        dev.drop = drop_first_perf
+        self.assertEqual(s.read_block(vt3.ADDR_PERF), vt3max_raw()[vt3.ADDR_PERF])
+
+    def test_idle_busy_after_plug_in(self):
+        # a freshly plugged-in cable reports 02 00 00 ... until its first command
+        s, dev = self.max_session()
+        dev.report = bytes([vt3.ACK_BUSY]).ljust(32, b"\0")
+        self.assertEqual(s.read(), vt3max_raw())
+
+    def drop_first(self, dev, test):
+        lost = []
+
+        def drop(f):
+            if test(f) and not lost:
+                lost.append(f)
+                return True
+            return False
+        dev.drop = drop
+
+    def test_slow_earlier_block_read_outlasting_settle(self):
+        # the reviewer's case: a SENSOR read stays busy past SETTLE_S, the
+        # PERF frame is lost, then the SENSOR answer lands
+        perf = vt3.ADDR_PERF.to_bytes(4, "little")
+        s, dev = self.max_session()
+        sensor = dev.answer(s._frame(vt3.CMD_READ, vt3.ADDR_SENSOR, length=4))
+        dev.report, dev.later, dev.polls = bytes([vt3.ACK_BUSY]).ljust(32, b"\0"), sensor, 60
+        self.drop_first(dev, lambda f: f[1] == vt3.CMD_READ and f[3:7] == perf)
+        self.assertEqual(s.read_block(vt3.ADDR_PERF), vt3max_raw()[vt3.ADDR_PERF])
+
+    def test_slow_earlier_battery_query_outlasting_settle(self):
+        s, dev = self.max_session()
+        stale = bytes([vt3.ACK_OK, 1, 50]).ljust(32, b"\0")
+        dev.report, dev.later, dev.polls = bytes([vt3.ACK_BUSY]).ljust(32, b"\0"), stale, 60
+        self.drop_first(dev, lambda f: f[1] == vt3.CMD_BATTERY)
+        self.assertEqual(s.battery(), (87, "charging"))
+
+    def test_leftovers_from_a_timed_out_session(self):
+        # the reviewer's case: a stale battery answer, then a slow stale
+        # SENSOR answer still queued behind it. The sync takes the battery
+        # answer; the caller's PERF must not be sent while SENSOR is busy.
+        perf = vt3.ADDR_PERF.to_bytes(4, "little")
+        s, dev = self.max_session()
+        sensor = dev.answer(s._frame(vt3.CMD_READ, vt3.ADDR_SENSOR, length=4))
+        stale = bytes([vt3.ACK_OK, 1, 50]).ljust(32, b"\0")
+        dev.report, dev.later, dev.polls = bytes([vt3.ACK_BUSY]).ljust(32, b"\0"), stale, 60
+        dev.queue.append((sensor, 200))
+        self.drop_first(dev, lambda f: f[1] == vt3.CMD_READ and f[3:7] == perf)
+        self.assertRightOrNoAnswer(lambda: s.read_block(vt3.ADDR_PERF), vt3max_raw()[vt3.ADDR_PERF])
+        for _ in range(400):                                          # once it drains,
+            dev.get_input()
+        self.assertEqual(s.read_block(vt3.ADDR_PERF), vt3max_raw()[vt3.ADDR_PERF])   # it works
+
+    def assertRightOrNoAnswer(self, call, expected):
+        try:
+            got = call()
+        except DeviceError as e:
+            self.assertEqual(e.code, "no-answer")
+        else:
+            self.assertEqual(got, expected)
+
+    def test_quick_leftover_with_a_slow_one_queued_behind(self):
+        # reviewer's case: a leftover battery answer lands quickly, a SENSOR
+        # answer is still queued behind it, and the PERF frame is lost
+        perf = vt3.ADDR_PERF.to_bytes(4, "little")
+        s, dev = self.max_session()
+        sensor = dev.answer(s._frame(vt3.CMD_READ, vt3.ADDR_SENSOR, length=4))
+        stale = bytes([vt3.ACK_OK, 1, 50]).ljust(32, b"\0")
+        dev.report, dev.later, dev.polls = bytes([vt3.ACK_BUSY]).ljust(32, b"\0"), stale, 3
+        dev.queue.append((sensor, 200))
+        self.drop_first(dev, lambda f: f[1] == vt3.CMD_READ and f[3:7] == perf)
+        self.assertRightOrNoAnswer(lambda: s.read_block(vt3.ADDR_PERF), vt3max_raw()[vt3.ADDR_PERF])
+
+    def test_queued_leftovers_cannot_verify_a_lost_write(self):
+        # reviewer's case: battery, SENSOR, battery and DPI-Y answers still
+        # queued, and every new frame is lost
+        s, dev = self.max_session()
+        before = s.read()
+        ans = lambda a: dev.answer(s._frame(vt3.CMD_READ, a, length=vt3.BLOCKS[a]))
+        bat = bytes([vt3.ACK_OK, *dev.battery]).ljust(32, b"\0")
+        dev.report, dev.later, dev.polls = bytes([vt3.ACK_BUSY]).ljust(32, b"\0"), bat, 3
+        dev.queue += [(ans(vt3.ADDR_SENSOR), 3), (bat, 3), (ans(vt3.ADDR_DPI_Y), 3)]
+        dev.drop = lambda f: True
+        after = copy_raw(before)
+        vt3max.DRIVER.setting("dpi.stage1").assign(after, "wired", "450")
+        with self.assertRaises(DeviceError):
+            s.write(before, after)
+        self.assertEqual(before[vt3.ADDR_DPI_X], vt3max_raw()[vt3.ADDR_DPI_X])
+        self.assertEqual(dev.block(vt3.ADDR_DPI_X, 16), bytes(vt3max_raw()[vt3.ADDR_DPI_X]))
+
+    def test_frames_sent_while_answers_are_queued_are_not_lost(self):
+        s, dev = self.max_session()
+        bat = bytes([vt3.ACK_OK, *dev.battery]).ljust(32, b"\0")
+        dev.report, dev.later, dev.polls = bytes([vt3.ACK_BUSY]).ljust(32, b"\0"), bat, 1
+        dev.queue.append((bat, 1))
+        dev.get_input()                     # first answer delivered, one still queued
+        dev.receive(s._frame(vt3.CMD_READ, vt3.ADDR_PERF, length=4))
+        seen = {dev.get_input()[:8] for _ in range(10)}
+        self.assertIn(bytes([vt3.ACK_OK, 0, 0, 0]) + bytes(vt3max_raw()[vt3.ADDR_PERF]), seen)
+
+    def test_wall_clock_jump_does_not_skip_the_quiet_window(self):
+        # reviewer's case: a leftover battery answer is held, a SENSOR
+        # answer lands a few ms later, the PERF frame is lost, and the wall
+        # clock jumps a second forward between the first two samples
+        import time as _time
+        perf = vt3.ADDR_PERF.to_bytes(4, "little")
+        s, dev = self.max_session()
+        sensor = dev.answer(s._frame(vt3.CMD_READ, vt3.ADDR_SENSOR, length=4))
+        dev.report = bytes([vt3.ACK_OK, 1, 50]).ljust(32, b"\0")
+        dev.later, dev.polls = sensor, 3
+        self.drop_first(dev, lambda f: f[1] == vt3.CMD_READ and f[3:7] == perf)
+        real, calls = _time.time, [0]
+
+        def jumpy():
+            calls[0] += 1
+            return real() + (1.0 if calls[0] >= 3 else 0.0)    # start, sample 1, then jump
+        with mock.patch("time.time", jumpy):
+            self.assertRightOrNoAnswer(lambda: s.read_block(vt3.ADDR_PERF), vt3max_raw()[vt3.ADDR_PERF])
+
+    def test_answer_of_the_wrong_kind_is_not_taken(self):
+        # a lost block read while the report flips to a battery answer
+        s, dev = self.max_session()
+        s.read_block(vt3.ADDR_DPI_X)
+        battery = bytes([vt3.ACK_OK, 1, 50]).ljust(32, b"\0")    # not the one held
+
+        def glitch(f):
+            if f[1] == vt3.CMD_READ:
+                dev.report = battery
+                return True
+            return False
+        dev.drop = glitch
+        with self.assertRaises(DeviceError):
+            s.read_block(vt3.ADDR_PERF)
+
+    def test_restore_refuses_8000_hz_on_the_receiver_slot(self):
+        s, dev = self.max_session()
+        before = s.read()
+        after = copy_raw(before)
+        after[vt3.ADDR_PERF][0] = 0x81
+        after[vt3.ADDR_DPI_X][0:2] = (450).to_bytes(2, "little")
+        sent = len(dev.frames)
+        with self.assertRaisesRegex(DeviceError, "2.4GHz slot"):
+            s.write(before, after)
+        self.assertFalse([f for f in dev.frames[sent:] if f[1] == vt3.CMD_WRITE])
+        target = bytearray(before[vt3.ADDR_PERF])
+        target[0] = 0x81
+        with self.assertRaisesRegex(DeviceError, "2.4GHz slot"):   # no "before" to compare with
+            s.write({}, {vt3.ADDR_PERF: target})
+        self.assertFalse([f for f in dev.frames[sent:] if f[1] == vt3.CMD_WRITE])
+        ok = copy_raw(before)
+        ok[vt3.ADDR_PERF][2] = 0x81                       # the cable slot takes it
+        self.assertEqual(s.write(before, ok), [vt3.ADDR_PERF])
+
+    def test_vt3pro_transport_unchanged(self):
+        # strict mode still needs busy: an instant answer counts as lost
+        dev = FakeVT3(vt3_raw(), fast=False)
+        s = vt3.VT3ProSession(Link(vt3.DRIVER, "/dev/null", "dongle"))
+        self.addCleanup(dev.attach(s).stop)
+        self.assertEqual(s.read(), vt3_raw())
+        dev.fast = True
+        with self.assertRaises(DeviceError):
+            s.request(s._frame(vt3.CMD_READ, vt3.ADDR_DPI_X, length=16), timeout=0.2)
 
 
 class X3Schema(unittest.TestCase):
