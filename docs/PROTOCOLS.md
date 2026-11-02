@@ -52,6 +52,56 @@ the sensor really tracks at the new DPI).
   polling slots, lift-off distance, sensor angle.
 - **Not checked:** the wired link (`24ae:4431`).
 
+## Rapoo VT3 PRO Max
+
+- **Protocol and source:** same as the VT3 PRO (EEPROM frames on report
+  `0xBA`, same block addresses), with its own driver id so its snapshots,
+  auto-backup and restore checks stay apart from the VT3 PRO's.
+- **Model evidence:** read from a real Max, every block decodes to the
+  published factory defaults (stages 400/800/1200/1600/3200/6400/30000).
+  Plugging the cable in adds `24ae:4444` while the receiver stays
+  `24ae:1244`.
+- **Limits:** PAW3950, so DPI goes to 30000 in steps of 10. 8000 Hz is byte
+  `0x81` in the Windows driver's `setReportRate` table.
+- **Checked on my mouse, on the cable `24ae:4444` and the receiver
+  `24ae:1244`:** every writable setting:
+  - all 7 DPI stages (10-DPI steps, the 30000 stage), active stage
+  - polling rate of the current link, motion sync, angle snap, ripple
+    control, press and release debounce, sleep timer
+  - a value set on the cable reads back over the receiver
+  - 8000 Hz on the cable, measured at ~8000 reports/s (1000 Hz measured at
+    ~1000/s)
+  - battery, charging on the cable
+- **Not supported yet:** 8000 Hz over the receiver. The mouse refuses
+  `0x81` on the 2.4GHz slot (it keeps the old rate), so that link offers
+  up to 4000 Hz until the vendor software's 8K wireless sequence is known.
+  Separate X/Y DPI isn't offered (both axes are written together).
+- **Transport:** on the cable the Max answers within ~4 ms, often before
+  the busy (`0x02`) phase can be seen, so its session doesn't rely on
+  busy. Freshness comes from content and timing instead, relying on the
+  mouse handling one exchange at a time, in order:
+  - before a frame is sent, the report must be non-busy and unchanged for
+    50 ms. Measured: on the cable, frames written back to back are all
+    answered within ~5 ms of the last write; the receiver answers one of
+    them within ~13 ms and drops the rest. Neither changed again in the
+    following 500 ms.
+  - the report held at that moment must be of the other kind than the
+    expected answer (battery answers have byte 1 = 1/2, block answers 0).
+    If it isn't, a query of the other kind goes first. Only a changed
+    answer of the expected kind is accepted.
+  - a freshly plugged-in cable idles at `02 00 ...` until its first
+    command, which looks the same as a slow exchange, so a busy that
+    doesn't clear within 300 ms never authorises the next frame: a battery
+    query is answered first and its answer thrown away. If the mouse is
+    still busy after that, the call fails with "no answer" without
+    sending anything else.
+
+  These hold within the measured timing, not unconditionally. Every write
+  is still verified by reading it back. The VT3 PRO keeps its original
+  busy-based transport.
+- **Write safety:** writes, `restore` included, refuse polling bytes a slot
+  doesn't take (8000 Hz in the 2.4GHz slot) before anything is sent.
+
 ## Pulsar X3 (PX3R21)
 
 - **Transport:** Pulsar Fusion's 64-byte vendor protocol: one feature report
