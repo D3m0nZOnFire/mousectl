@@ -298,6 +298,32 @@ class M5Schema(unittest.TestCase):
         a[1] ^= 1
         self.assertFalse(m5._same("dpi", a, b))
 
+    def test_two_stages_off_in_one_apply(self):
+        for d, raw in ((m5.DRIVER, m5_raw()), (px3.DRIVER, x3_raw())):
+            with self.subTest(driver=d.id):
+                pending = copy_raw(raw)
+                n = sum(d.setting(f"dpi.stage{i}").enabled(raw, "dongle") for i in range(1, 7)
+                        if any(s.key == f"dpi.stage{i}" for s in d.settings))
+                for i in (n, n - 1):
+                    d.setting(f"dpi.stage{i}").assign(pending, "dongle", "off")
+                target = replay(d.settings, raw, pending, "dongle", ["DPI"])
+                self.assertFalse(d.setting(f"dpi.stage{n - 1}").enabled(target, "dongle"))
+                self.assertTrue(d.setting(f"dpi.stage{n - 2}").enabled(target, "dongle"))
+
+    def test_stage_swap_on_a_bitmask_in_one_apply(self):
+        # X11 stages are a bitmask: with only stage 2 on, "enable 1, disable 2"
+        # must enable first or the mask would empty on the way.
+        d, raw = x11.DRIVER, x11_raw()
+        for i in range(x11.STAGES, 0, -1):
+            if i != 2 and d.setting(f"dpi.stage{i}").enabled(raw, "dongle"):
+                d.setting(f"dpi.stage{i}").assign(raw, "dongle", "off")
+        pending = copy_raw(raw)
+        d.setting("dpi.stage1").assign(pending, "dongle", "800")
+        d.setting("dpi.stage2").assign(pending, "dongle", "off")
+        target = replay(d.settings, raw, pending, "dongle", ["DPI"])
+        self.assertTrue(d.setting("dpi.stage1").enabled(target, "dongle"))
+        self.assertFalse(d.setting("dpi.stage2").enabled(target, "dongle"))
+
     def test_config_interface(self):
         class Node:
             descriptor = bytes.fromhex("06c1ff0901a101150026ff00750885b40902953f8102c0")
