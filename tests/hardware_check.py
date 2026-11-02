@@ -23,11 +23,23 @@ Result = namedtuple("Result", "name ok detail")
 
 
 def other_value(s, raw, mode):
-    """A valid value different from the current one, or None."""
+    """A valid value different from the current one, or None. Values the
+    setting itself refuses on this link (e.g. a rate only the cable takes)
+    are stepped over, nearest first in either direction."""
     cur = s.get(raw, mode)
-    for d in (1, -1):
-        v = s.kind.nudge(cur, d)
-        if v != cur:
+    seen = {cur}
+    tips = {1: cur, -1: cur}
+    for _ in range(64):
+        for d in (1, -1):
+            v = s.kind.nudge(tips[d], d)
+            tips[d] = v
+            if v in seen:
+                continue
+            seen.add(v)
+            try:
+                s.assign(copy_raw(raw), mode, v)
+            except ValueError:
+                continue
             return v
     return None
 
@@ -68,6 +80,12 @@ def check_session(s):
             v = other_value(st, original, mode)
             if v is not None:
                 results.append(check_setting(s, st, original, v))
+            else:
+                cur = st.get(original, mode)
+                if any(st.kind.nudge(cur, d) != cur for d in (1, -1)):
+                    results.append(Result(st.key, False, "no other value this link accepts -- not tested"))
+                else:   # e.g. colours: no "next value" to step to
+                    results.append(Result(st.key, True, "skipped: can't step this kind of value"))
     finally:
         store.apply(s, s.read(), copy_raw(original))
     now = s.read()
