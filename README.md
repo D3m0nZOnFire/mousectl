@@ -10,6 +10,7 @@ Supported:
 | id                | mouse             | links                  | alias    |
 |-------------------|-------------------|------------------------|----------|
 | `attackshark-x11` | Attack Shark X11  | wired `1d57:fa55`, dongle `1d57:fa60` | `ashark` |
+| `keychron-m5a24`  | KeyChron M5 8K    | wired `3434:d048`, dongle `3434:d028` | `m5a24` |
 | `rapoo-vt3pro`    | Rapoo VT3 PRO     | wired `24ae:4431`, dongle `24ae:1231` | `vt3pro` |
 | `pulsar-x3`       | Pulsar X3 (PX3R21) | wired `3710:3409` / `3410`, dongle `3710:5402` / `5403` (8K) | `x3` |
 
@@ -93,6 +94,8 @@ be listed here.
 - Pulsar X3 protocol: [wertyg775/pulsar-x3-software](https://github.com/wertyg775/pulsar-x3-software),
   [jonkristian/pulsar-x3-python](https://github.com/jonkristian/pulsar-x3-python) (MIT) and
   [packerlschupfer/pulsar-mouse-linux](https://github.com/packerlschupfer/pulsar-mouse-linux) (MIT)
+- KeyChron M5 8K protocol: read from Keychron's own [Launcher](https://launcher.keychron.com) web app
+  and confirmed on the mouse (see [docs/PROTOCOLS.md](docs/PROTOCOLS.md))
 - Rapoo protocol research: [pedro3z0/rapoo-software-linux](https://github.com/pedro3z0/rapoo-software-linux) (MIT)
 
 ## License

@@ -70,6 +70,50 @@ the sensor really tracks at the new DPI).
 - **Not checked:** the 8K dongle (`3710:5403`), whether polling above 1000 Hz
   takes effect through this dongle, the wired link (`3710:3409` / `3410`).
 
+## KeyChron M5 8K (M5-A24)
+
+- **Transport:** Keychron's "8k" mouse protocol on the vendor collection
+  (usage page `0xFFC1`, USB interface 4): output reports `0xB3` (63 bytes) and
+  `0xB5` (20 bytes), answered on input reports `0xB4` / `0xB6`. Writes are
+  acknowledged with `E4 <status> <command>`. The dongle forwards commands to
+  the mouse over the air. This is not the Pulsar protocol, even though both
+  are 8K PAW395x mice.
+- **Source:** the Keychron Launcher web app (launcher.keychron.com, WebHID).
+  The command layouts were read from its JavaScript bundle and the
+  polling/LOD tables from its product JSON for `3434:d048`. No code was
+  copied. Every command layout below was then confirmed on the mouse.
+  The one exception is the 20K FPS byte of command `0x42`, which this
+  firmware doesn't support: it is always written back with the value the
+  mouse reports, in the Launcher's encoding (1 = off, 2 = on).
+- **Checked on my mouse (firmware 1.0.2), on the cable `3434:d048` and the
+  dongle `3434:d028` (firmware 0.1.4):** every setting:
+  - all 5 DPI stages, stage count, active stage
+  - polling rate (8000 Hz to 125 Hz and back)
+  - motion sync, angle snap, ripple control, lift-off distance, reverse
+    scroll, debounce, sleep
+  - battery, including the charging bit (set while the cable is in)
+  - settings written over the cable read back the same over the dongle
+  - Polling level and active stage are stored once per connection slot
+    (cable / 2.4 GHz), but a write on either link copies the value to every
+    slot, so they are one shared setting.
+  - With fewer than 5 stages, the mouse refills the unused stage slots on
+    its own. Verify ignores those slots.
+  - While the cable is in, the mouse stops answering through the dongle;
+    `mousectl` skips that link with "no answer".
+- **Not supported:** profiles, per-button debounce, button remapping and
+  20K FPS mode (the Launcher only offers profiles and 20K FPS from mouse
+  firmware 1.0.4, which is untested; the driver reads and writes the
+  active profile only).
+- **Known limitation:** `3434:d028` is Keychron's generic Ultra-Link 8K
+  receiver. The driver assumes the mouse paired to it is an M5 8K and
+  doesn't check which mouse it is.
+- **Write safety:** before writing anything, every changed block is
+  checked (stage count, DPI range, known polling/LOD values, debounce
+  and sleep ranges). One bad field refuses the whole write, whether it
+  comes from `set`, the TUI or `restore`. A value the mouse already
+  holds passes, so an unexpected value from newer firmware doesn't block
+  unrelated edits.
+
 ## Checking a mouse yourself
 
 `python3 -m tests.hardware_check -m <driver-id>` runs the same round trips on

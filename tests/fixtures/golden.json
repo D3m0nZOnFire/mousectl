@@ -1896,5 +1896,28 @@
    "debounce": 3,
    "sleep": 0.5
   }
+ },
+ "keychron-m5a24": {
+  "comment": "command 0x06 answer read from a real M5 8K (fw 1.0.2) over the Ultra-Link 8K dongle",
+  "config": "0600505000900120034006800c88131505040a5d00000000000002000000040404040404040404040000000000000000000000000000000000000000000000",
+  "decoded": {
+   "stages": [
+    400,
+    800,
+    1600,
+    3200,
+    5000
+   ],
+   "active": 1,
+   "polling": 8000,
+   "lod": 1,
+   "angle_snap": false,
+   "ripple": true,
+   "motion_sync": true,
+   "scroll_reverse": false,
+   "debounce": 4,
+   "sleep": 10,
+   "battery": 93
+  }
  }
 }

@@ -239,10 +239,14 @@ def replay(settings, device_raw, pending_raw, mode, groups):
     """
     target = copy_raw(device_raw)
     todo = [s for g in groups for s in dirty_settings(settings, device_raw, pending_raw, mode, g)]
-    for s in todo:
-        if s.set_enabled:
-            want = s.enabled(pending_raw, mode)
-            if want != s.enabled(target, mode):
+    # Enables run first-to-last, then disables last-to-first: a bitmask of
+    # stages (X11) never empties on the way, and list-like stages (DPI
+    # stages where only the last live one can go) accept several changes
+    # in one apply.
+    switch = [s for s in todo if s.set_enabled]
+    for want, order in ((True, switch), (False, reversed(switch))):
+        for s in order:
+            if s.enabled(pending_raw, mode) == want and want != s.enabled(target, mode):
                 s.set_enabled(target, mode, want)
     for s in todo:
         if s.enabled(pending_raw, mode):

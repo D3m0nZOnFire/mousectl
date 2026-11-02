@@ -1,0 +1,28 @@
+{
+  "driver": "keychron-m5a24",
+  "mode": "dongle",
+  "saved": "2026-11-01 16:44:12",
+  "blocks": {
+    "dpi": "00900120034006800c881305",
+    "polling": "05",
+    "sensor": "0101020100010001",
+    "debounce": "04",
+    "sleep": "0a"
+  },
+  "decoded": {
+    "dpi.stage1": 400,
+    "dpi.stage2": 800,
+    "dpi.stage3": 1600,
+    "dpi.stage4": 3200,
+    "dpi.stage5": 5000,
+    "dpi.active": 1,
+    "polling": 8000,
+    "motion_sync": true,
+    "angle_snap": false,
+    "ripple": true,
+    "lod": 1,
+    "scroll_reverse": false,
+    "debounce": 4,
+    "sleep": 10
+  }
+}
