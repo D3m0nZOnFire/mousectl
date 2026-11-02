@@ -212,8 +212,12 @@ class VT3Schema(unittest.TestCase):
         self.assertEqual([s.key for s in dirty_settings(d.settings, target, pending, "dongle")], ["ripple"])
 
 
-def m5_raw():
-    return {u: bytearray.fromhex(h) for u, h in GOLDEN["keychron-m5a24"]["raw"].items()}
+def m5_cfg():
+    return bytes.fromhex(GOLDEN["keychron-m5a24"]["config"])
+
+
+def m5_raw(mode="dongle"):
+    return m5.decode_config(m5_cfg(), mode)
 
 
 def x3_raw():
@@ -226,34 +230,80 @@ class M5Schema(unittest.TestCase):
         for i, dpi in enumerate(g["stages"]):
             self.assertEqual(val(d, raw, f"dpi.stage{i + 1}"), dpi)
         self.assertEqual(val(d, raw, "dpi.active"), g["active"])
-        for key in ("lod", "polling", "angle_snap", "ripple", "motion_sync", "debounce", "sleep"):
+        for key in ("lod", "polling", "angle_snap", "ripple", "motion_sync", "scroll_reverse", "debounce", "sleep"):
             self.assertEqual(val(d, raw, key), g[key], key)
+        self.assertEqual(m5_cfg()[19] & 0x7F, g["battery"])
+
+    def test_cable_reads_its_own_slot(self):
+        cfg = bytearray(m5_cfg())
+        cfg[2] = 0x21                   # cable slot: 1000 Hz, stage 2
+        raw = m5_raw()
+        wired = m5.decode_config(cfg, "wired")
+        self.assertEqual(val(m5.DRIVER, wired, "polling", "wired"), 1000)
+        self.assertEqual(val(m5.DRIVER, wired, "dpi.active", "wired"), 2)
+        self.assertEqual(val(m5.DRIVER, raw, "polling"), 8000)
 
     def test_set_then_get(self):
         raw, d = m5_raw(), m5.DRIVER
-        for key, text, want in (("dpi.stage2", "950", 950), ("dpi.active", "6", 6), ("polling", "500", 500),
-                                ("lod", "0.7", 0.7), ("debounce", "0", 0),
-                                ("sleep", "2", 2), ("sleep", "1.5", 1.5), ("motion_sync", "on", True)):
+        for key, text, want in (("dpi.stage2", "950", 950), ("dpi.active", "5", 5), ("polling", "500", 500),
+                                ("lod", "0.7", 0.7), ("lod", "2", 2), ("debounce", "0", 0), ("debounce", "20", 20),
+                                ("sleep", "240", 240), ("motion_sync", "off", False), ("angle_snap", "on", True),
+                                ("scroll_reverse", "on", True)):
             d.setting(key).assign(raw, "dongle", text)
             self.assertEqual(val(d, raw, key), want, key)
 
-    def test_stage_sets_x_and_y(self):
+    def test_dpi_grid(self):
+        d = m5.DRIVER
+        with self.assertRaises(ValueError):
+            d.setting("dpi.stage1").assign(m5_raw(), "dongle", "975")
+        with self.assertRaises(ValueError):
+            d.setting("dpi.stage1").assign(m5_raw(), "dongle", "30050")
+
+    def test_write_payloads(self):
+        # Byte layouts checked against the Keychron Launcher and a real mouse.
         raw, d = m5_raw(), m5.DRIVER
-        d.setting("dpi.stage4").assign(raw, "dongle", "1230")
-        self.assertEqual(raw["dpi"][17:22], bytes([4]) + (1230).to_bytes(2, "little") * 2)
+        d.setting("dpi.stage2").assign(raw, "dongle", "850")
+        d.setting("dpi.active").assign(raw, "dongle", "2")
+        self.assertEqual(m5.encode_unit("dpi", raw["dpi"]),
+                         (0xB5, bytes([0x40, 1, 1, 1]) + b"".join(v.to_bytes(2, "little")
+                                                                 for v in (400, 850, 1600, 3200, 5000)) + b"\x05"))
+        d.setting("polling").assign(raw, "dongle", "1000")
+        self.assertEqual(m5.encode_unit("polling", raw["polling"]), (0xB5, bytes([0x41, 2, 2, 0, 1, 2, 3, 4, 5, 6])))
+        d.setting("angle_snap").assign(raw, "dongle", "on")
+        self.assertEqual(m5.encode_unit("sensor", raw["sensor"]), (0xB5, bytes([0x42, 1, 1, 1, 1, 0, 1, 0, 1])))
+        self.assertEqual(m5.encode_unit("debounce", raw["debounce"]), (0xB5, bytes([0x43, 4])))
+        self.assertEqual(m5.encode_unit("sleep", raw["sleep"]), (0xB5, bytes([0x0A, 1, 10])))
 
     def test_stages_are_a_list(self):
         raw, d = m5_raw(), m5.DRIVER
         with self.assertRaises(ValueError):
             d.setting("dpi.stage3").assign(raw, "dongle", "off")     # not the last
-        d.setting("dpi.stage6").assign(raw, "dongle", "off")
+        d.setting("dpi.active").assign(raw, "dongle", "5")
         d.setting("dpi.stage5").assign(raw, "dongle", "off")
-        self.assertEqual(raw["dpi"][1], 4)
+        d.setting("dpi.stage4").assign(raw, "dongle", "off")
+        self.assertEqual(raw["dpi"][11], 3)
+        self.assertEqual(val(d, raw, "dpi.active"), 3)                 # clamped to the last live stage
         with self.assertRaises(ValueError):
-            d.setting("dpi.active").assign(raw, "dongle", "5")
-        d.setting("dpi.stage6").assign(raw, "dongle", "20000")       # re-enables 5 too
-        self.assertEqual(raw["dpi"][1], 6)
-        self.assertEqual(val(d, raw, "dpi.stage5"), 6400)             # old value kept
+            d.setting("dpi.active").assign(raw, "dongle", "4")
+        d.setting("dpi.stage5").assign(raw, "dongle", "20000")        # re-enables 4 too
+        self.assertEqual(raw["dpi"][11], 5)
+        self.assertEqual(val(d, raw, "dpi.stage4"), 3200)             # old value kept
+
+    def test_verify_ignores_refilled_slots(self):
+        # With fewer stages the mouse refills the unused slots on its own.
+        a, b = m5_raw()["dpi"], m5_raw()["dpi"]
+        b[11], a[11] = 4, 4
+        a[9:11] = (3200).to_bytes(2, "little")
+        self.assertTrue(m5._same("dpi", a, b))
+        a[1] ^= 1
+        self.assertFalse(m5._same("dpi", a, b))
+
+    def test_config_interface(self):
+        class Node:
+            descriptor = bytes.fromhex("06c1ff0901a101150026ff00750885b40902953f8102c0")
+        self.assertTrue(m5.DRIVER.is_config_interface(Node()))
+        Node.descriptor = bytes.fromhex("058c0901a10185b10902c0")
+        self.assertFalse(m5.DRIVER.is_config_interface(Node()))
 
 
 class X3Schema(unittest.TestCase):

@@ -1898,33 +1898,26 @@
   }
  },
  "keychron-m5a24": {
-  "raw": {
-   "dpi": "030601900190010220032003034006400604800c800c05001900190600320032",
-   "lod": "0a",
-   "polling": "08",
-   "angle_snap": "00",
-   "ripple": "00",
-   "motion_sync": "00",
-   "debounce": "03",
-   "sleep": "1e00"
-  },
+  "comment": "command 0x06 answer read from a real M5 8K (fw 1.0.2) over the Ultra-Link 8K dongle",
+  "config": "0600505000900120034006800c88131505040a5d00000000000002000000040404040404040404040000000000000000000000000000000000000000000000",
   "decoded": {
    "stages": [
     400,
     800,
     1600,
     3200,
-    6400,
-    12800
+    5000
    ],
-   "active": 3,
+   "active": 1,
+   "polling": 8000,
    "lod": 1,
-   "polling": 1000,
    "angle_snap": false,
-   "ripple": false,
-   "motion_sync": false,
-   "debounce": 3,
-   "sleep": 0.5
+   "ripple": true,
+   "motion_sync": true,
+   "scroll_reverse": false,
+   "debounce": 4,
+   "sleep": 10,
+   "battery": 93
   }
  }
 }
